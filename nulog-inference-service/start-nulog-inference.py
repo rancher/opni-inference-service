@@ -10,7 +10,7 @@ import time
 import pandas as pd
 from elasticsearch import AsyncElasticsearch
 from elasticsearch.helpers import async_bulk
-from nats_wrapper import NatsWrapper
+from opni_nats import NatsWrapper
 from NulogServer import NulogServer
 
 logging.basicConfig(

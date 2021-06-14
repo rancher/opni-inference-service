@@ -49,7 +49,7 @@ class NulogServer:
         for k in bucket_files:
             try:
                 minio_client.meta.client.download_file(
-                    bucket_name, bucket_files[k], "output/{}".format(bucket_files[k])
+                    bucket_name, bucket_files[k], f"output/{bucket_files[k]}"
                 )
             except Exception as e:
                 logging.error(
@@ -67,7 +67,7 @@ class NulogServer:
             self.is_ready = True
             logging.info("Nulog model gets loaded.")
         except Exception as e:
-            logging.error("No Nulog model currently {}".format(e))
+            logging.error(f"No Nulog model currently {e}")
 
     def predict(self, logs: List[str]):
         """
@@ -91,5 +91,5 @@ class NulogServer:
                 pred = (self.parser.predict(tokens))[0]
                 output.append(pred)
                 self.saved_preds[log] = pred
-        logging.debug("size of saved preds : {}".format(len(self.saved_preds)))
+        logging.debug(f"size of saved preds : {len(self.saved_preds)}")
         return output

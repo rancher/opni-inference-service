@@ -40,7 +40,7 @@ class LogTokenizer:
     def load_vocab(self):
         self.word2index = {}
         self.index2word = {}
-        with open(os.path.join(self.filepath, "vocab.txt"), "r") as fin:
+        with open(os.path.join(self.filepath, "vocab.txt")) as fin:
             self.n_words = int(fin.readline().rstrip())
             self.valid_words = int(fin.readline().rstrip())
             logging.info("n_words : " + str(self.n_words))

@@ -12,7 +12,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(messa
 def load_text():
     texts = []
     masker = LogMasker()
-    with open("input/mix-raw.log", "r") as fin:
+    with open("input/mix-raw.log") as fin:
         for idx, line in enumerate(fin):
             try:
                 log = json.loads(line)
