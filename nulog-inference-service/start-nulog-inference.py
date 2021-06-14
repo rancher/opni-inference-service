@@ -10,8 +10,8 @@ import time
 import pandas as pd
 from elasticsearch import AsyncElasticsearch
 from elasticsearch.helpers import async_bulk
-from opni_nats import NatsWrapper
 from NulogServer import NulogServer
+from opni_nats import NatsWrapper
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
