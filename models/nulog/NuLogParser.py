@@ -136,7 +136,7 @@ class LogParser:
         model.train()
         logging.info("#######Training Model within {self.nr_epochs} epochs...######")
         for epoch in range(self.nr_epochs):
-            logging.info("Epoch: {}".format(epoch))
+            logging.info(f"Epoch: {epoch}")
             self.run_epoch(
                 train_dataloader,
                 model,
@@ -286,11 +286,9 @@ class LogParser:
         """Function to transform log file to dataframe"""
         all_log_messages = []
         json_files = sorted(
-            [
-                file
-                for file in os.listdir(windows_folder_path)
-                if file.endswith(".json.gz")
-            ]
+            file
+            for file in os.listdir(windows_folder_path)
+            if file.endswith(".json.gz")
         )
         for window_file in json_files:
             window_df = pd.read_json(
@@ -318,7 +316,7 @@ class LogParser:
         regex = ""
         for k in range(len(splitters)):
             if k % 2 == 0:
-                splitter = re.sub(" +", "\\\s+", splitters[k])
+                splitter = re.sub(" +", "\\\\s+", splitters[k])
                 regex += splitter
             else:
                 header = splitters[k].strip("<").strip(">")

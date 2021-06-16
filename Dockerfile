@@ -2,7 +2,6 @@ FROM python:3.7-slim
 
 RUN apt-get update && apt-get install -y wget zip
 COPY ./nulog-inference-service/ /app/
-COPY ./opni-nats-wrapper/nats_wrapper.py /app/nats_wrapper.py
 COPY ./models/nulog/ /app/
 
 RUN chmod a+rwx -R /app
