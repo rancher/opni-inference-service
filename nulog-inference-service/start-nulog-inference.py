@@ -20,14 +20,13 @@ THRESHOLD = float(os.getenv("MODEL_THRESHOLD", 0.7))
 ES_ENDPOINT = os.environ["ES_ENDPOINT"]
 IS_CONTROL_PLANE_SERVICE = bool(os.getenv("IS_CONTROL_PLANE_SERVICE", False))
 
+nw = NatsWrapper()
+
 
 async def consume_logs(logs_queue):
     """
     coroutine to consume logs from NATS and put messages to the logs_queue
     """
-    nw = NatsWrapper()
-    logging.info("connecting to nats")
-    await nw.connect()
     if IS_CONTROL_PLANE_SERVICE:
         await nw.subscribe(
             nats_subject="preprocessed_logs_control_plane",
@@ -137,11 +136,19 @@ async def infer_logs(logs_queue):
         gc.collect()
 
 
+async def init_nats():
+    logging.info("Attempting to connect to NATS")
+    await nw.connect()
+
+
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     logs_queue = asyncio.Queue(loop=loop)
     consumer_coroutine = consume_logs(logs_queue)
     inference_coroutine = infer_logs(logs_queue)
+
+    task = loop.create_task(init_nats())
+    loop.run_until_complete(task)
 
     loop.run_until_complete(asyncio.gather(inference_coroutine, consumer_coroutine))
     try:
