@@ -13,6 +13,6 @@ ENV NVIDIA_VISIBLE_DEVICES all
 ENV NVIDIA_DRIVER_CAPABILITIES compute,utility
 
 RUN pip install --no-cache-dir -r requirements.txt
-RUN wget https://opni-public.s3.us-east-2.amazonaws.com/pretrain-models/control-plane-model.zip && unzip control-plane-model.zip
+RUN wget https://opni-public.s3.us-east-2.amazonaws.com/pretrain-models/control-plane-model-v0.1.2.zip && unzip control-plane-model-v0.1.2.zip
 
 CMD [ "python", "start-nulog-inference.py" ]

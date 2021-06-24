@@ -16,7 +16,7 @@ def load_text():
         for idx, line in enumerate(fin):
             try:
                 log = json.loads(line)
-                log = log["log"].rstrip().lower()
+                log = log["log"]
                 log = masker.mask(log)
                 texts.append(log)
             except Exception as e:
