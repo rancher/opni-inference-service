@@ -64,7 +64,7 @@ async def infer_logs(logs_queue):
             yield doc_dict
 
     if IS_CONTROL_PLANE_SERVICE:
-        script_source = 'ctx._source.anomaly_level = ctx._source.anomaly_predicted_count == 0 ? "Normal" : "Anomaly";'
+        script_source = 'ctx._source.anomaly_level = ctx._source.anomaly_predicted_count != 0 ? "Anomaly" : "Normal";'
     else:
         script_source = 'ctx._source.anomaly_level = ctx._source.anomaly_predicted_count == 0 ? "Normal" : ctx._source.anomaly_predicted_count == 1 ? "Suspicious" : "Anomaly";'
     script_source += "ctx._source.nulog_confidence = params['nulog_score'];"
