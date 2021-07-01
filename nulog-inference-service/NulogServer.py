@@ -1,7 +1,6 @@
 # Standard Library
 import logging
 import os
-from collections import defaultdict
 from typing import List
 
 # Third Party
@@ -20,7 +19,6 @@ DEFAULT_MODELREADY_PAYLOAD = {
         "vocab_file": "vocab.txt",
     },
 }
-MAX_DICT_SIZE = 10000
 MIN_LOG_TOKENS = int(os.getenv("MIN_LOG_TOKENS", 1))
 
 
@@ -28,7 +26,6 @@ class NulogServer:
     def __init__(self):
         self.is_ready = False
         self.parser = None
-        self.saved_preds = defaultdict(float)
 
     def download_from_minio(
         self,
@@ -76,8 +73,6 @@ class NulogServer:
         if not self.is_ready:
             logging.warning("Warning: NuLog model is not ready yet!")
             return None
-        if len(self.saved_preds) > MAX_DICT_SIZE:
-            self.saved_preds.clear()
 
         # output = nuloginf.predict(self.parser, logs)
         output = []
@@ -85,11 +80,7 @@ class NulogServer:
             tokens = self.parser.tokenize_data([log], isTrain=False)
             if len(tokens[0]) < MIN_LOG_TOKENS:
                 output.append(1)
-            elif log in self.saved_preds:
-                output.append(self.saved_preds[log])
             else:
                 pred = (self.parser.predict(tokens))[0]
                 output.append(pred)
-                self.saved_preds[log] = pred
-        logging.debug(f"size of saved preds : {len(self.saved_preds)}")
         return output
