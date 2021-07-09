@@ -83,4 +83,7 @@ class NulogServer:
             else:
                 pred = (self.parser.predict(tokens))[0]
                 output.append(pred)
-        return output
+        result_dict = {}
+        for l, p in zip(logs, output):
+            result_dict[l] = p
+        return result_dict

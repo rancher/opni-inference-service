@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import time
+from collections import defaultdict
 
 # Third Party
 import pandas as pd
@@ -20,6 +21,8 @@ logging.basicConfig(
 THRESHOLD = float(os.getenv("MODEL_THRESHOLD", 0.7))
 ES_ENDPOINT = os.environ["ES_ENDPOINT"]
 IS_CONTROL_PLANE_SERVICE = bool(os.getenv("IS_CONTROL_PLANE_SERVICE", False))
+IS_GPU_SERVICE = bool(os.getenv("IS_GPU_SERVICE", False))
+
 
 nw = NatsWrapper()
 es = AsyncElasticsearch(
@@ -141,8 +144,8 @@ async def infer_logs(logs_queue):
             is_log_cached = df["masked_log"] in saved_preds
             df_cached_logs = df[is_log_cached]
             df_new_logs = df[~is_log_cached]
-            df_cached_logs["nulog_confidence"] = saved_preds[
-                df_cached_logs["masked_log"]
+            df_cached_logs["nulog_confidence"] = [
+                saved_preds[ml] for ml in df_cached_logs["masked_log"]
             ]
             await update_preds_to_es(df_cached_logs)
 
@@ -154,17 +157,20 @@ async def infer_logs(logs_queue):
                 except ErrTimeout:
                     logging.warning("request to GPU service timeout.")
                     response = "request declined."
+                logging.info(f"{response} for GPU service")
 
             if not response or IS_GPU_SERVICE or IS_CONTROL_PLANE_SERVICE:
-                masked_logs = list(df_new_logs["masked_log"])
-                pred_scores = nulog_predictor.predict(masked_logs)
+                unique_masked_logs = list(df_new_logs["masked_log"].unique())
+                pred_scores_dict = nulog_predictor.predict(unique_masked_logs)
 
                 if pred_scores is None:
                     logging.warning("fail to make predictions.")
                 else:
-                    df_new_logs["nulog_confidence"] = pred_scores
-                    for p, m in zip(pred_scores, masked_logs):
-                        saved_preds[m] = p
+                    df_new_logs["nulog_confidence"] = [
+                        pred_scores_dict[ml] for ml in df_new_logs["masked_log"]
+                    ]
+                    for ml in pred_scores_dict:
+                        saved_preds[ml] = pred_scores_dict[ml]
                     if IS_GPU_SERVICE:
                         nw.publish(
                             nats_subject="gpu_inference_results",
