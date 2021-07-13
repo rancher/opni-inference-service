@@ -62,7 +62,12 @@ async def consume_logs(logs_queue):
             )
         else:
             await nw.subscribe(
-                nats_subject="preprocessed_logs", payload_queue=logs_queue
+                nats_subject="preprocessed_logs",
+                payload_queue=logs_queue,
+                nats_queue="workers",
+            )
+            await nw.subscribe(
+                nats_subject="gpu_service_predictions", payload_queue=logs_queue
             )
 
 
@@ -131,11 +136,14 @@ async def infer_logs(logs_queue):
             continue
 
         df_payload = pd.read_json(payload, dtype={"_id": object})
-        if "nulog_confidence" in df_payload.columns:
+        if (
+            "nulog_confidence" in df_payload.columns
+        ):  ## memorize predictions from GPU services.
             for score, log in zip(
                 df_payload["nulog_confidence"], df_payload["masked_log"]
             ):
                 saved_preds[log] = score
+            logging.info("saved predictions from GPU service.")
             continue
 
         for i in range(0, len(df_payload), max_payload_size):
@@ -150,16 +158,19 @@ async def infer_logs(logs_queue):
             await update_preds_to_es(df_cached_logs)
 
             if not (IS_GPU_SERVICE or IS_CONTROL_PLANE_SERVICE):
-                try:  # try to post request to GPU service
+                try:  # try to post request to GPU service. response would be b"YES" if accepted, b"NO" for declined/timeout request
                     response = await nw.nc.request(
-                        "gpu_service_inference", pd.to_json(df_new_logs), timeout=1
+                        "gpu_service_inference",
+                        df_new_logs.to_json().encode(),
+                        timeout=1,
                     )
+                    response = response.decode()
                 except ErrTimeout:
                     logging.warning("request to GPU service timeout.")
-                    response = "request declined."
+                    response = "NO"
                 logging.info(f"{response} for GPU service")
 
-            if not response or IS_GPU_SERVICE or IS_CONTROL_PLANE_SERVICE:
+            if response == "NO" or IS_GPU_SERVICE or IS_CONTROL_PLANE_SERVICE:
                 unique_masked_logs = list(df_new_logs["masked_log"].unique())
                 pred_scores_dict = nulog_predictor.predict(unique_masked_logs)
 
@@ -173,8 +184,8 @@ async def infer_logs(logs_queue):
                         saved_preds[ml] = pred_scores_dict[ml]
                     if IS_GPU_SERVICE:
                         nw.publish(
-                            nats_subject="gpu_inference_results",
-                            payload=pd.to_json(df_new_logs),
+                            nats_subject="gpu_service_predictions",
+                            payload=df_new_logs.to_json().encode(),
                         )
                     await update_preds_to_es(df_new_logs)
 
