@@ -5,6 +5,8 @@ import json
 import logging
 import os
 import time
+import urllib.request
+import zipfile
 from collections import defaultdict
 
 # Third Party
@@ -35,7 +37,7 @@ es = AsyncElasticsearch(
 )
 
 if IS_CONTROL_PLANE_SERVICE:
-    script_source = 'ctx._source.anomaly_level = ctx._source.anomaly_predicted_count == 0 ? "Normal" : "Anomaly";'
+    script_source = 'ctx._source.anomaly_level = ctx._source.anomaly_predicted_count != 0 ? "Anomaly" : "Normal";'
 else:
     script_source = 'ctx._source.anomaly_level = ctx._source.anomaly_predicted_count == 0 ? "Normal" : ctx._source.anomaly_predicted_count == 1 ? "Suspicious" : "Anomaly";'
 script_source += "ctx._source.nulog_confidence = params['nulog_score'];"
@@ -131,8 +133,11 @@ async def infer_logs(logs_queue):
         ## logic: df = pd.read_json(payload, dtype={"_id": object})
         ## if "bucket" in df: reload nulog model
         if "bucket" in decoded_payload and decoded_payload["bucket"] == "nulog-models":
-            nulog_predictor.download_from_minio(decoded_payload)
-            nulog_predictor.load()
+            if IS_CONTROL_PLANE_SERVICE:
+                nulog_predictor.load(save_path="control-plane-output/")
+            else:
+                nulog_predictor.download_from_minio(decoded_payload)
+                nulog_predictor.load()
             continue
 
         df_payload = pd.read_json(payload, dtype={"_id": object})
@@ -158,7 +163,7 @@ async def infer_logs(logs_queue):
             await update_preds_to_es(df_cached_logs)
 
             if not (IS_GPU_SERVICE or IS_CONTROL_PLANE_SERVICE):
-                try:  # try to post request to GPU service. response would be b"YES" if accepted, b"NO" for declined/timeout request
+                try:  # try to post request to GPU service. response would be b"YES" if accepted, b"NO" for declined/timeout
                     response = await nw.nc.request(
                         "gpu_service_inference",
                         df_new_logs.to_json().encode(),
@@ -202,6 +207,51 @@ async def init_nats():
     await nw.connect()
 
 
+async def get_pretrain_model():
+    url = "https://opni-public.s3.us-east-2.amazonaws.com/pretrain-models/version.txt"
+    try:
+        latest_version = urllib.request.urlopen(url).read().decode("utf-8")
+    except Exception as e:
+        logging.error(e)
+        logging.error("can't locate the version info from opni-public bucket")
+        return False
+
+    try:
+        with open("version.txt") as fin:
+            local_version = fin.read()
+    except Exception as e:
+        logging.warning(e)
+        local_version = "None"
+    logging.info(
+        f"latest model version: {latest_version}; local model version: {local_version}"
+    )
+
+    if latest_version != local_version:
+        urllib.request.urlretrieve(url, "version.txt")
+        model_zip_file = f"control-plane-model-{latest_version}.zip"
+        urllib.request.urlretrieve(
+            f"https://opni-public.s3.us-east-2.amazonaws.com/pretrain-models/{model_zip_file}",
+            model_zip_file,
+        )
+        with zipfile.ZipFile(model_zip_file, "r") as zip_ref:
+            zip_ref.extractall("./")
+        logging.info("update to latest model")
+        return True
+    else:
+        logging.info("model already up to date")
+        return False
+
+
+async def schedule_update_pretrain_model(logs_queue):
+    while True:
+        await asyncio.sleep(86400)  # try to update after 24 hours
+        update_status = await get_pretrain_model()
+        if update_status:
+            logs_queue.put(
+                json.dumps({"bucket": "nulog-models"})
+            )  # send a signal to reload model
+
+
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     logs_queue = asyncio.Queue(loop=loop)
@@ -211,7 +261,20 @@ if __name__ == "__main__":
     task = loop.create_task(init_nats())
     loop.run_until_complete(task)
 
-    loop.run_until_complete(asyncio.gather(inference_coroutine, consumer_coroutine))
+    if IS_CONTROL_PLANE_SERVICE:
+        init_model_task = loop.create_task(get_pretrain_model())
+        loop.run_until_complete(init_model_task)
+
+    if IS_CONTROL_PLANE_SERVICE:
+        loop.run_until_complete(
+            asyncio.gather(
+                inference_coroutine,
+                consumer_coroutine,
+                schedule_update_pretrain_model(logs_queue),
+            )
+        )
+    else:
+        loop.run_until_complete(asyncio.gather(inference_coroutine, consumer_coroutine))
     try:
         loop.run_forever()
     finally:
