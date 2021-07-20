@@ -26,9 +26,6 @@ THRESHOLD = float(os.getenv("MODEL_THRESHOLD", 0.7))
 ES_ENDPOINT = os.environ["ES_ENDPOINT"]
 IS_CONTROL_PLANE_SERVICE = bool(os.getenv("IS_CONTROL_PLANE_SERVICE", False))
 IS_GPU_SERVICE = bool(os.getenv("IS_GPU_SERVICE", False))
-IS_CPU_INFERENCE = False if (IS_CONTROL_PLANE_SERVICE or IS_GPU_SERVICE) else True
-
-logging.info(f"IS_GPU_SERVICE : {IS_GPU_SERVICE}, IS_CPU_INFERENCE: {IS_CPU_INFERENCE}")
 
 nw = NatsWrapper()
 es = AsyncElasticsearch(
@@ -177,7 +174,7 @@ async def infer_logs(logs_queue):
                 if len(df_new_logs) > 0:
                     if not (IS_GPU_SERVICE or IS_CONTROL_PLANE_SERVICE):
                         try:  # try to post request to GPU service. response would be b"YES" if accepted, b"NO" for declined/timeout
-                            response = await nw.nc.request(
+                            response = await nw.request(
                                 "gpu_service_inference",
                                 df_new_logs.to_json().encode(),
                                 timeout=1,
@@ -298,7 +295,7 @@ if __name__ == "__main__":
                 training_coroutine,
             )
         )
-    else:
+    else:  # CPU SERVICE
         loop.run_until_complete(asyncio.gather(inference_coroutine, consumer_coroutine))
     try:
         loop.run_forever()
