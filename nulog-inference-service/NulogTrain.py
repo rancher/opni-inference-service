@@ -30,7 +30,7 @@ def train_nulog_model(minio_client, windows_folder_path):
     parser.train(tokenized, nr_epochs=nr_epochs, num_samples=num_samples)
     all_files = os.listdir("output/")
     if "nulog_model_latest.pt" in all_files and "vocab.txt" in all_files:
-        logging.info("Completed training model")
+        logging.debug("Completed training model")
         minio_client.meta.client.upload_file(
             "output/nulog_model_latest.pt", "nulog-models", "nulog_model_latest.pt"
         )
@@ -39,7 +39,7 @@ def train_nulog_model(minio_client, windows_folder_path):
         )
         logging.info("Nulog model and vocab have been uploaded to Minio.")
     else:
-        logging.info("Nulog model was not able to be trained and saved successfully.")
+        logging.error("Nulog model was not able to be trained and saved successfully.")
         return False
     return True
 
@@ -56,18 +56,17 @@ def minio_setup_and_download_data(minio_client):
         logging.error(
             f"Could not connect to minio with endpoint_url={MINIO_ENDPOINT} aws_access_key_id={MINIO_ACCESS_KEY} aws_secret_access_key={MINIO_SECRET_KEY} "
         )
-        logging.info("Job failed")
         return False
 
     try:
         minio_client.meta.client.head_bucket(Bucket="nulog-models")
-        logging.info("nulog-models bucket exists")
+        logging.debug("nulog-models bucket exists")
     except botocore.exceptions.ClientError as e:
         # If a client error is thrown, then check that it was a 404 error.
         # If it was a 404 error, then the bucket does not exist.
         error_code = e.response["Error"]["Code"]
         if error_code == "404":
-            logging.info("nulog-models bucket does not exist so creating it now")
+            logging.warning("nulog-models bucket does not exist so creating it now")
             minio_client.create_bucket(Bucket="nulog-models")
     return True
 
@@ -144,4 +143,4 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        logging.info(f"Nulog training failed. Exception {e}")
+        logging.error(f"Nulog training failed. Exception {e}")
