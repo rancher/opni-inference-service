@@ -9,6 +9,11 @@ import inference as nuloginf
 from botocore.config import Config
 from NuLogParser import using_GPU
 
+LOGGING_LEVEL = os.getenv("LOGGING_LEVEL", "INFO")
+logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__file__)
+logger.setLevel(LOGGING_LEVEL)
+
 MINIO_ACCESS_KEY = os.environ["MINIO_ACCESS_KEY"]
 MINIO_SECRET_KEY = os.environ["MINIO_SECRET_KEY"]
 MINIO_ENDPOINT = os.environ["MINIO_ENDPOINT"]
@@ -49,29 +54,29 @@ class NulogServer:
                     bucket_name, bucket_files[k], f"output/{bucket_files[k]}"
                 )
             except Exception as e:
-                logging.error(
+                logger.error(
                     "Cannot currently obtain necessary model files. Exiting function"
                 )
                 return
 
     def load(self, save_path="output/"):
         if using_GPU:
-            logging.debug("inferencing with GPU.")
+            logger.debug("inferencing with GPU.")
         else:
-            logging.debug("inferencing without GPU.")
+            logger.debug("inferencing without GPU.")
         try:
             self.parser = nuloginf.init_model(save_path=save_path)
             self.is_ready = True
-            logging.info("Nulog model gets loaded.")
+            logger.info("Nulog model gets loaded.")
         except Exception as e:
-            logging.error(f"No Nulog model currently {e}")
+            logger.error(f"No Nulog model currently {e}")
 
     def predict(self, logs: List[str]):
         """
         logs: masked logs
         """
         if not self.is_ready:
-            logging.warning("Warning: NuLog model is not ready yet!")
+            logger.warning("Warning: NuLog model is not ready yet!")
             return None
 
         # output = nuloginf.predict(self.parser, logs)

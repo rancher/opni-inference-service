@@ -13,7 +13,10 @@ from botocore.exceptions import EndpointConnectionError
 from NuLogParser import LogParser
 from opni_nats import NatsWrapper
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(message)s")
+LOGGING_LEVEL = os.getenv("LOGGING_LEVEL", "INFO")
+logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__file__)
+logger.setLevel(LOGGING_LEVEL)
 
 MINIO_ENDPOINT = os.environ["MINIO_ENDPOINT"]
 MINIO_ACCESS_KEY = os.environ["MINIO_ACCESS_KEY"]
@@ -30,16 +33,16 @@ def train_nulog_model(minio_client, windows_folder_path):
     parser.train(tokenized, nr_epochs=nr_epochs, num_samples=num_samples)
     all_files = os.listdir("output/")
     if "nulog_model_latest.pt" in all_files and "vocab.txt" in all_files:
-        logging.debug("Completed training model")
+        logger.debug("Completed training model")
         minio_client.meta.client.upload_file(
             "output/nulog_model_latest.pt", "nulog-models", "nulog_model_latest.pt"
         )
         minio_client.meta.client.upload_file(
             "output/vocab.txt", "nulog-models", "vocab.txt"
         )
-        logging.info("Nulog model and vocab have been uploaded to Minio.")
+        logger.info("Nulog model and vocab have been uploaded to Minio.")
     else:
-        logging.error("Nulog model was not able to be trained and saved successfully.")
+        logger.error("Nulog model was not able to be trained and saved successfully.")
         return False
     return True
 
@@ -49,24 +52,24 @@ def minio_setup_and_download_data(minio_client):
         minio_client.meta.client.download_file(
             "training-logs", "windows.tar.gz", "windows.tar.gz"
         )
-        logging.info("Downloaded logs from minio successfully")
+        logger.info("Downloaded logs from minio successfully")
 
         shutil.unpack_archive("windows.tar.gz", format="gztar")
     except EndpointConnectionError:
-        logging.error(
+        logger.error(
             f"Could not connect to minio with endpoint_url={MINIO_ENDPOINT} aws_access_key_id={MINIO_ACCESS_KEY} aws_secret_access_key={MINIO_SECRET_KEY} "
         )
         return False
 
     try:
         minio_client.meta.client.head_bucket(Bucket="nulog-models")
-        logging.debug("nulog-models bucket exists")
+        logger.debug("nulog-models bucket exists")
     except botocore.exceptions.ClientError as e:
         # If a client error is thrown, then check that it was a 404 error.
         # If it was a 404 error, then the bucket does not exist.
         error_code = e.response["Error"]["Code"]
         if error_code == "404":
-            logging.warning("nulog-models bucket does not exist so creating it now")
+            logger.warning("nulog-models bucket does not exist so creating it now")
             minio_client.create_bucket(Bucket="nulog-models")
     return True
 
@@ -86,7 +89,7 @@ async def send_signal_to_nats(nw):
     await nw.publish(
         nats_subject="model_ready", payload_df=json.dumps(nulog_payload).encode()
     )
-    logging.info(
+    logger.info(
         "Published to model_ready Nats subject that new Nulog model is ready to be used for inferencing."
     )
 
@@ -117,7 +120,7 @@ async def train_model(job_queue, nw):
 
 
 async def init_nats(nw):
-    logging.info("Attempting to connect to NATS")
+    logger.info("Attempting to connect to NATS")
     await nw.connect()
 
 
@@ -143,4 +146,4 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        logging.error(f"Nulog training failed. Exception {e}")
+        logger.error(f"Nulog training failed. Exception {e}")

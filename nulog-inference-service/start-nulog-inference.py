@@ -19,11 +19,15 @@ from NulogServer import NulogServer
 from NulogTrain import consume_signal, train_model
 from opni_nats import NatsWrapper
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-)
+LOGGING_LEVEL = os.getenv("LOGGING_LEVEL", "INFO")
+logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__file__)
+logger.setLevel(LOGGING_LEVEL)
+
 THRESHOLD = float(os.getenv("MODEL_THRESHOLD", 0.7))
 ES_ENDPOINT = os.environ["ES_ENDPOINT"]
+ES_USERNAME = os.getenv("ES_USERNAME", "admin")
+ES_PASSWORD = os.getenv("ES_PASSWORD", "admin")
 IS_CONTROL_PLANE_SERVICE = bool(os.getenv("IS_CONTROL_PLANE_SERVICE", False))
 IS_GPU_SERVICE = bool(os.getenv("IS_GPU_SERVICE", False))
 
@@ -32,7 +36,7 @@ es = AsyncElasticsearch(
     [ES_ENDPOINT],
     port=9200,
     http_compress=True,
-    http_auth=("admin", "admin"),
+    http_auth=(ES_USERNAME, ES_PASSWORD),
     verify_certs=False,
     use_ssl=True,
 )
@@ -96,14 +100,14 @@ async def update_preds_to_es(df):
     ]
     try:
         await async_bulk(es, doc_generator(df[["_id", "_op_type", "_index", "script"]]))
-        logging.info(
+        logger.info(
             "Updated {} anomalies from {} logs to ES".format(
                 len(df[df["predictions"] > 0]),
                 len(df["predictions"]),
             )
         )
     except Exception as e:
-        logging.error(e)
+        logger.error(e)
 
 
 async def infer_logs(logs_queue):
@@ -139,7 +143,7 @@ async def infer_logs(logs_queue):
         if (
             "gpu_service_result" in df_payload.columns
         ):  ## memorize predictions from GPU services.
-            logging.debug("saved predictions from GPU service.")
+            logger.debug("saved predictions from GPU service.")
             for score, log in zip(
                 df_payload["nulog_confidence"], df_payload["masked_log"]
             ):
@@ -158,7 +162,7 @@ async def infer_logs(logs_queue):
                     ]
                     await update_preds_to_es(df_cached_logs)
                     if IS_GPU_SERVICE:
-                        logging.debug("send cached results back.")
+                        logger.debug("send cached results back.")
                         df_cached_logs["gpu_service_result"] = True
                         await nw.publish(
                             nats_subject="gpu_service_predictions",
@@ -175,16 +179,19 @@ async def infer_logs(logs_queue):
                             )
                             response = response.data.decode()
                         except ErrTimeout:
-                            logging.warning("request to GPU service timeout.")
+                            logger.warning("request to GPU service timeout.")
                             response = "NO"
-                        logging.debug(f"{response} for GPU service")
+                        logger.debug(f"{response} for GPU service")
 
                     if IS_GPU_SERVICE or IS_CONTROL_PLANE_SERVICE or response == "NO":
                         unique_masked_logs = list(df_new_logs["masked_log"].unique())
+                        logger.debug(
+                            f" {len(unique_masked_logs)} unique logs to inference."
+                        )
                         pred_scores_dict = nulog_predictor.predict(unique_masked_logs)
 
                         if pred_scores_dict is None:
-                            logging.warning("fail to make predictions.")
+                            logger.warning("fail to make predictions.")
                         else:
                             df_new_logs["nulog_confidence"] = [
                                 pred_scores_dict[ml] for ml in df_new_logs["masked_log"]
@@ -193,13 +200,13 @@ async def infer_logs(logs_queue):
                                 saved_preds[ml] = pred_scores_dict[ml]
                             await update_preds_to_es(df_new_logs)
                             if IS_GPU_SERVICE:
-                                logging.debug("send new results back.")
+                                logger.debug("send new results back.")
                                 df_new_logs["gpu_service_result"] = True
                                 await nw.publish(
                                     nats_subject="gpu_service_predictions",
                                     payload_df=df_new_logs.to_json().encode(),
                                 )
-            logging.info(
+            logger.info(
                 f"payload size :{len(df_payload)}. processed in {(time.time() - start_time)} second"
             )
 
@@ -209,7 +216,7 @@ async def infer_logs(logs_queue):
 
 
 async def init_nats():
-    logging.info("Attempting to connect to NATS")
+    logger.info("Attempting to connect to NATS")
     await nw.connect()
 
 
@@ -218,17 +225,17 @@ async def get_pretrain_model():
     try:
         latest_version = urllib.request.urlopen(url).read().decode("utf-8")
     except Exception as e:
-        logging.error(e)
-        logging.error("can't locate the version info from opni-public bucket")
+        logger.error(e)
+        logger.error("can't locate the version info from opni-public bucket")
         return False
 
     try:
         with open("version.txt") as fin:
             local_version = fin.read()
     except Exception as e:
-        logging.warning(e)
+        logger.warning(e)
         local_version = "None"
-    logging.info(
+    logger.info(
         f"latest model version: {latest_version}; local model version: {local_version}"
     )
 
@@ -241,10 +248,10 @@ async def get_pretrain_model():
         )
         with zipfile.ZipFile(model_zip_file, "r") as zip_ref:
             zip_ref.extractall("./")
-        logging.info("update to latest model")
+        logger.info("update to latest model")
         return True
     else:
-        logging.info("model already up to date")
+        logger.info("model already up to date")
         return False
 
 

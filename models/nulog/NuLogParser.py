@@ -134,7 +134,7 @@ class LogParser:
         )
         ## train if no model
         model.train()
-        logging.info("#######Training Model within {self.nr_epochs} epochs...######")
+        logging.info(f"#######Training Model within {self.nr_epochs} epochs...######")
         for epoch in range(self.nr_epochs):
             logging.info(f"Epoch: {epoch}")
             self.run_epoch(
