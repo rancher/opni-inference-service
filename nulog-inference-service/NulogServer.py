@@ -1,7 +1,6 @@
 # Standard Library
 import logging
 import os
-from collections import defaultdict
 from typing import List
 
 # Third Party
@@ -9,6 +8,11 @@ import boto3
 import inference as nuloginf
 from botocore.config import Config
 from NuLogParser import using_GPU
+
+LOGGING_LEVEL = os.getenv("LOGGING_LEVEL", "INFO")
+logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__file__)
+logger.setLevel(LOGGING_LEVEL)
 
 MINIO_ACCESS_KEY = os.environ["MINIO_ACCESS_KEY"]
 MINIO_SECRET_KEY = os.environ["MINIO_SECRET_KEY"]
@@ -20,7 +24,6 @@ DEFAULT_MODELREADY_PAYLOAD = {
         "vocab_file": "vocab.txt",
     },
 }
-MAX_DICT_SIZE = 10000
 MIN_LOG_TOKENS = int(os.getenv("MIN_LOG_TOKENS", 1))
 
 
@@ -28,7 +31,6 @@ class NulogServer:
     def __init__(self):
         self.is_ready = False
         self.parser = None
-        self.saved_preds = defaultdict(float)
 
     def download_from_minio(
         self,
@@ -52,32 +54,30 @@ class NulogServer:
                     bucket_name, bucket_files[k], f"output/{bucket_files[k]}"
                 )
             except Exception as e:
-                logging.error(
+                logger.error(
                     "Cannot currently obtain necessary model files. Exiting function"
                 )
                 return
 
     def load(self, save_path="output/"):
         if using_GPU:
-            logging.debug("inferencing with GPU.")
+            logger.debug("inferencing with GPU.")
         else:
-            logging.debug("inferencing without GPU.")
+            logger.debug("inferencing without GPU.")
         try:
             self.parser = nuloginf.init_model(save_path=save_path)
             self.is_ready = True
-            logging.info("Nulog model gets loaded.")
+            logger.info("Nulog model gets loaded.")
         except Exception as e:
-            logging.error(f"No Nulog model currently {e}")
+            logger.error(f"No Nulog model currently {e}")
 
     def predict(self, logs: List[str]):
         """
         logs: masked logs
         """
         if not self.is_ready:
-            logging.warning("Warning: NuLog model is not ready yet!")
+            logger.warning("Warning: NuLog model is not ready yet!")
             return None
-        if len(self.saved_preds) > MAX_DICT_SIZE:
-            self.saved_preds.clear()
 
         # output = nuloginf.predict(self.parser, logs)
         output = []
@@ -85,11 +85,10 @@ class NulogServer:
             tokens = self.parser.tokenize_data([log], isTrain=False)
             if len(tokens[0]) < MIN_LOG_TOKENS:
                 output.append(1)
-            elif log in self.saved_preds:
-                output.append(self.saved_preds[log])
             else:
                 pred = (self.parser.predict(tokens))[0]
                 output.append(pred)
-                self.saved_preds[log] = pred
-        logging.debug(f"size of saved preds : {len(self.saved_preds)}")
-        return output
+        result_dict = {}
+        for l, p in zip(logs, output):
+            result_dict[l] = p
+        return result_dict
