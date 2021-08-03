@@ -76,7 +76,7 @@ def minio_setup_and_download_data(minio_client):
     return True
 
 
-async def send_signal_to_nats(nw):
+async def send_signal_to_nats():
     await nw.publish(
         "gpu_trainingjob_status", b"JobEnd"
     )  ## tells the GPU service that a training job done.
@@ -96,13 +96,13 @@ async def send_signal_to_nats(nw):
     )
 
 
-async def consume_signal(job_queue, nw):
+async def consume_signal(job_queue):
     await nw.subscribe(
         nats_subject="gpu_service_training_internal", payload_queue=job_queue
     )
 
 
-async def train_model(job_queue, nw):
+async def train_model(job_queue):
     minio_client = boto3.resource(
         "s3",
         endpoint_url=MINIO_ENDPOINT,
@@ -130,8 +130,8 @@ def main():
     loop = asyncio.get_event_loop()
     job_queue = asyncio.Queue(loop=loop)
 
-    consumer_coroutine = consume_signal(job_queue, nw)
-    training_coroutine = train_model(job_queue, nw)
+    consumer_coroutine = consume_signal(job_queue)
+    training_coroutine = train_model(job_queue)
 
     task = loop.create_task(init_nats())
     loop.run_until_complete(task)
