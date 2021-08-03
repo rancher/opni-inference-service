@@ -18,6 +18,7 @@ from nats.aio.errors import ErrTimeout
 from NulogServer import NulogServer
 from NulogTrain import consume_signal, train_model
 from opni_nats import NatsWrapper
+from NuLogParser import using_GPU
 
 LOGGING_LEVEL = os.getenv("LOGGING_LEVEL", "INFO")
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
@@ -219,6 +220,16 @@ async def init_nats():
     logger.info("Attempting to connect to NATS")
     await nw.connect()
 
+async def count_backlog_amount(logs_queue):
+    while True:
+        backlog_count = logs_queue.qsize()
+        backlog_payload = {"backlog_count": backlog_count}
+        if using_GPU:
+            await nw.publish(nats_subject="opni_nulog_gpu", payload_df=json.dumps(backlog_payload).encode())
+        else:
+            await nw.publish(nats_subject="opni_nulog_cpu", payload_df=json.dumps(backlog_payload).encode())
+        await asyncio.sleep(5)
+
 
 async def get_pretrain_model():
     url = "https://opni-public.s3.us-east-2.amazonaws.com/pretrain-models/version.txt"
@@ -270,6 +281,7 @@ if __name__ == "__main__":
     logs_queue = asyncio.Queue(loop=loop)
     consumer_coroutine = consume_logs(logs_queue)
     inference_coroutine = infer_logs(logs_queue)
+    count_backlog_coroutine = count_backlog_amount(logs_queue)
 
     task = loop.create_task(init_nats())
     loop.run_until_complete(task)
@@ -296,10 +308,11 @@ if __name__ == "__main__":
                 consumer_coroutine,
                 signal_coroutine,
                 training_coroutine,
+                count_backlog_coroutine,
             )
         )
     else:  # CPU SERVICE
-        loop.run_until_complete(asyncio.gather(inference_coroutine, consumer_coroutine))
+        loop.run_until_complete(asyncio.gather(inference_coroutine, consumer_coroutine, count_backlog_coroutine))
 
     try:
         loop.run_forever()
