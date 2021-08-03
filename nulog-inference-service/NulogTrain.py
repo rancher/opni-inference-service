@@ -22,6 +22,8 @@ MINIO_ENDPOINT = os.environ["MINIO_ENDPOINT"]
 MINIO_ACCESS_KEY = os.environ["MINIO_ACCESS_KEY"]
 MINIO_SECRET_KEY = os.environ["MINIO_SECRET_KEY"]
 
+nw = NatsWrapper()
+
 
 def train_nulog_model(minio_client, windows_folder_path):
     nr_epochs = 3
@@ -119,20 +121,19 @@ async def train_model(job_queue, nw):
         ## TODO: what to do if model training ever failed?
 
 
-async def init_nats(nw):
-    logger.info("Attempting to connect to NATS")
+async def init_nats():
+    logger.info("Connecting to nats")
     await nw.connect()
 
 
 def main():
     loop = asyncio.get_event_loop()
     job_queue = asyncio.Queue(loop=loop)
-    nw = NatsWrapper()
 
     consumer_coroutine = consume_signal(job_queue, nw)
     training_coroutine = train_model(job_queue, nw)
 
-    task = loop.create_task(init_nats(nw))
+    task = loop.create_task(init_nats())
     loop.run_until_complete(task)
 
     loop.run_until_complete(asyncio.gather(training_coroutine, consumer_coroutine))
