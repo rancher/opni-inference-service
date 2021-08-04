@@ -41,6 +41,7 @@ def train_nulog_model(minio_client, windows_folder_path):
             "output/vocab.txt", "nulog-models", "vocab.txt"
         )
         logger.info("Nulog model and vocab have been uploaded to Minio.")
+        shutil.rmtree('windows/')
     else:
         logger.error("Nulog model was not able to be trained and saved successfully.")
         return False
@@ -75,6 +76,7 @@ def minio_setup_and_download_data(minio_client):
 
 
 async def send_signal_to_nats(nw):
+    await nw.connect()
     await nw.publish(
         "gpu_trainingjob_status", b"JobEnd"
     )  ## tells the GPU service that a training job done.

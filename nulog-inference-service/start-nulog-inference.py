@@ -132,6 +132,7 @@ async def infer_logs(logs_queue):
         decoded_payload = json.loads(payload)
         if "bucket" in decoded_payload and decoded_payload["bucket"] == "nulog-models":
             # signal to reload model
+            logger.info("Received signal to load Nulog model.")
             if IS_CONTROL_PLANE_SERVICE:
                 nulog_predictor.load(save_path="control-plane-output/")
             else:
