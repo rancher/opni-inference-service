@@ -124,10 +124,11 @@ class LogParser:
             betas=self.betas,
             weight_decay=self.weight_decay,
         )
-
+        '''
         if (self.model_name) in os.listdir(self.savePath):
             # model.load_state_dict(torch.load(self.model_path))
             prev_epoch, prev_loss = self.load_model(model, model_opt)
+        '''
 
         train_dataloader = self.get_train_dataloaders(
             data_tokenized, transform_to_tensor
