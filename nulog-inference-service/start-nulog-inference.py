@@ -226,10 +226,13 @@ async def count_backlog_amount(logs_queue):
         backlog_count = logs_queue.qsize()
         backlog_payload = {"backlog_count": backlog_count}
         if using_GPU:
+            logging.info("using GPU, backlog count is {}".format(backlog_count))
             await nw.publish(nats_subject="opni_nulog_gpu", payload_df=json.dumps(backlog_payload).encode())
         else:
+            logging.info("Using CPU, backlog count is {}".format(backlog_count))
             await nw.publish(nats_subject="opni_nulog_cpu", payload_df=json.dumps(backlog_payload).encode())
-        await asyncio.sleep(5)
+        logger.info("Published backlog data to Nats")
+        await asyncio.sleep(20)
 
 
 async def get_pretrain_model():
@@ -280,6 +283,7 @@ async def schedule_update_pretrain_model(logs_queue):
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     logs_queue = asyncio.Queue(loop=loop)
+    model_ready_queue = asyncio.Queue(loop=loop)
     consumer_coroutine = consume_logs(logs_queue)
     inference_coroutine = infer_logs(logs_queue)
     count_backlog_coroutine = count_backlog_amount(logs_queue)

@@ -75,25 +75,25 @@ def minio_setup_and_download_data(minio_client):
     return True
 
 
-async def send_signal_to_nats(nw):
+async def send_signal_to_nats(nw, training_succeeded):
     await nw.connect()
     await nw.publish(
         "gpu_trainingjob_status", b"JobEnd"
     )  ## tells the GPU service that a training job done.
-
-    nulog_payload = {
-        "bucket": "nulog-models",
-        "bucket_files": {
-            "model_file": "nulog_model_latest.pt",
-            "vocab_file": "vocab.txt",
-        },
-    }
-    await nw.publish(
-        nats_subject="model_ready", payload_df=json.dumps(nulog_payload).encode()
-    )
-    logger.info(
-        "Published to model_ready Nats subject that new Nulog model is ready to be used for inferencing."
-    )
+    if training_succeeded:
+        nulog_payload = {
+            "bucket": "nulog-models",
+            "bucket_files": {
+                "model_file": "nulog_model_latest.pt",
+                "vocab_file": "vocab.txt",
+            },
+        }
+        await nw.publish(
+            nats_subject="model_ready", payload_df=json.dumps(nulog_payload).encode()
+        )
+        logger.info(
+            "Published to model_ready Nats subject that new Nulog model is ready to be used for inferencing."
+        )
 
 
 async def consume_signal(job_queue, nw):
@@ -116,8 +116,7 @@ async def train_model(job_queue, nw):
 
         res_download_data = minio_setup_and_download_data(minio_client)
         res_train_model = train_nulog_model(minio_client, windows_folder_path)
-        if res_train_model:
-            await send_signal_to_nats(nw)
+        await send_signal_to_nats(nw, res_train_model)
         ## TODO: what to do if model training ever failed?
 
 
