@@ -18,9 +18,11 @@ logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__file__)
 logger.setLevel(LOGGING_LEVEL)
 
-MINIO_ENDPOINT = os.environ["MINIO_ENDPOINT"]
-MINIO_ACCESS_KEY = os.environ["MINIO_ACCESS_KEY"]
-MINIO_SECRET_KEY = os.environ["MINIO_SECRET_KEY"]
+S3_ENDPOINT = os.environ["S3_ENDPOINT"]
+S3_ACCESS_KEY = os.environ["S3_ACCESS_KEY"]
+S3_SECRET_KEY = os.environ["S3_SECRET_KEY"]
+S3_BUCKET = os.getenv("S3_BUCKET", "opni-nulog-models")
+TRAINING_DATA_PATH = os.getenv("TRAINING_DATA_PATH", "/var/opni-data")
 
 
 def train_nulog_model(minio_client, windows_folder_path):
@@ -46,23 +48,9 @@ def train_nulog_model(minio_client, windows_folder_path):
         return False
     return True
 
-
-def minio_setup_and_download_data(minio_client):
+def s3_setup(s3_client):
     try:
-        minio_client.meta.client.download_file(
-            "training-logs", "windows.tar.gz", "windows.tar.gz"
-        )
-        logger.info("Downloaded logs from minio successfully")
-
-        shutil.unpack_archive("windows.tar.gz", format="gztar")
-    except EndpointConnectionError:
-        logger.error(
-            f"Could not connect to minio with endpoint_url={MINIO_ENDPOINT} aws_access_key_id={MINIO_ACCESS_KEY} aws_secret_access_key={MINIO_SECRET_KEY} "
-        )
-        return False
-
-    try:
-        minio_client.meta.client.head_bucket(Bucket="nulog-models")
+        s3_client.meta.client.head_bucket(Bucket=S3_BUCKET)
         logger.debug("nulog-models bucket exists")
     except botocore.exceptions.ClientError as e:
         # If a client error is thrown, then check that it was a 404 error.
@@ -70,9 +58,8 @@ def minio_setup_and_download_data(minio_client):
         error_code = e.response["Error"]["Code"]
         if error_code == "404":
             logger.warning("nulog-models bucket does not exist so creating it now")
-            minio_client.create_bucket(Bucket="nulog-models")
+            s3_client.create_bucket(Bucket=S3_BUCKET)
     return True
-
 
 async def send_signal_to_nats(nw):
     await nw.publish(
@@ -108,13 +95,15 @@ async def train_model(job_queue, nw):
         aws_secret_access_key=MINIO_SECRET_KEY,
         config=Config(signature_version="s3v4"),
     )
-    windows_folder_path = "windows/"
+    windows_folder_path = os.path.join(TRAINING_DATA_PATH, "windows")
     while True:
         new_job = await job_queue.get()  ## TODO: should the metadata being used?
 
-        res_download_data = minio_setup_and_download_data(minio_client)
-        res_train_model = train_nulog_model(minio_client, windows_folder_path)
+        res_s3_setup = s3_setup(s3_client)
+        res_train_model = train_nulog_model(s3_client, windows_folder_path)
         if res_train_model:
+            #Clean windows
+            shutil.rmtree(windows_folder_path)
             await send_signal_to_nats(nw)
         ## TODO: what to do if model training ever failed?
 

@@ -119,7 +119,7 @@ async def infer_logs(logs_queue):
     if IS_CONTROL_PLANE_SERVICE:
         nulog_predictor.load(save_path="control-plane-output/")
     else:
-        nulog_predictor.download_from_minio()
+        nulog_predictor.download_from_s3()
         nulog_predictor.load()
 
     max_payload_size = 128 if IS_CONTROL_PLANE_SERVICE else 512
@@ -135,7 +135,7 @@ async def infer_logs(logs_queue):
             if IS_CONTROL_PLANE_SERVICE:
                 nulog_predictor.load(save_path="control-plane-output/")
             else:
-                nulog_predictor.download_from_minio(decoded_payload)
+                nulog_predictor.download_from_s3(decoded_payload)
                 nulog_predictor.load()
             continue
 
