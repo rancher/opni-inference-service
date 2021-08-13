@@ -10,8 +10,10 @@ import zipfile
 from collections import defaultdict
 
 # Third Party
+import boto3
 import numpy as np
 import pandas as pd
+from botocore.config import Config
 from elasticsearch import AsyncElasticsearch
 from elasticsearch.helpers import async_bulk
 from nats.aio.errors import ErrTimeout
@@ -28,8 +30,18 @@ THRESHOLD = float(os.getenv("MODEL_THRESHOLD", 0.7))
 ES_ENDPOINT = os.environ["ES_ENDPOINT"]
 ES_USERNAME = os.getenv("ES_USERNAME", "admin")
 ES_PASSWORD = os.getenv("ES_PASSWORD", "admin")
+MINIO_ACCESS_KEY = os.environ["MINIO_ACCESS_KEY"]
+MINIO_SECRET_KEY = os.environ["MINIO_SECRET_KEY"]
+MINIO_ENDPOINT = os.environ["MINIO_ENDPOINT"]
 IS_CONTROL_PLANE_SERVICE = bool(os.getenv("IS_CONTROL_PLANE_SERVICE", False))
 IS_GPU_SERVICE = bool(os.getenv("IS_GPU_SERVICE", False))
+CACHED_PREDS_SAVEFILE = (
+    "control-plane-preds.txt"
+    if IS_CONTROL_PLANE_SERVICE
+    else "gpu-preds.txt"
+    if IS_GPU_SERVICE
+    else "cpu-preds.txt"
+)
 
 nw = NatsWrapper()
 es = AsyncElasticsearch(
@@ -39,6 +51,13 @@ es = AsyncElasticsearch(
     http_auth=(ES_USERNAME, ES_PASSWORD),
     verify_certs=False,
     use_ssl=True,
+)
+minio_client = boto3.resource(
+    "s3",
+    endpoint_url=MINIO_ENDPOINT,
+    aws_access_key_id=MINIO_ACCESS_KEY,
+    aws_secret_access_key=MINIO_SECRET_KEY,
+    config=Config(signature_version="s3v4"),
 )
 
 if IS_CONTROL_PLANE_SERVICE:
@@ -110,11 +129,49 @@ async def update_preds_to_es(df):
         logger.error(e)
 
 
+def load_cached_preds(saved_preds: dict):
+
+    bucket_name = "nulog-models"
+    try:
+        minio_client.meta.client.download_file(
+            bucket_name, CACHED_PREDS_SAVEFILE, CACHED_PREDS_SAVEFILE
+        )
+        with open(CACHED_PREDS_SAVEFILE) as fin:
+            for line in fin:
+                ml, score = line.split("\t")
+                saved_preds[ml] = float(score)
+    except Exception as e:
+        logger.error("cached preds files do not exist.")
+    logger.debug(f"loaded from cached preds: {len(saved_preds)}")
+    return saved_preds
+
+
+def save_cached_preds(new_preds: dict, saved_preds: dict):
+    update_to_minio = False
+    bucket_name = "nulog-models"
+    with open(CACHED_PREDS_SAVEFILE, "a") as fout:
+        for ml in new_preds:
+            logger.debug("ml :" + str(ml))
+            saved_preds[ml] = new_preds[ml]
+            fout.write(ml + "\t" + str(new_preds[ml]) + "\n")
+            if len(saved_preds) % 100 == 0:
+                update_to_minio = True
+    logger.debug(f"saved cached preds, current num of cache: {len(saved_preds)}")
+    if update_to_minio:
+        try:
+            minio_client.meta.client.upload_file(
+                CACHED_PREDS_SAVEFILE, bucket_name, CACHED_PREDS_SAVEFILE
+            )
+        except Exception as e:
+            logger.error("Failed to update predictions to minio.")
+
+
 async def infer_logs(logs_queue):
     """
     coroutine to get payload from logs_queue, call inference rest API and put predictions to elasticsearch.
     """
     saved_preds = defaultdict(float)
+    load_cached_preds(saved_preds)
     nulog_predictor = NulogServer()
     if IS_CONTROL_PLANE_SERVICE:
         nulog_predictor.load(save_path="control-plane-output/")
@@ -144,10 +201,10 @@ async def infer_logs(logs_queue):
             "gpu_service_result" in df_payload.columns
         ):  ## memorize predictions from GPU services.
             logger.debug("saved predictions from GPU service.")
-            for score, log in zip(
-                df_payload["nulog_confidence"], df_payload["masked_log"]
-            ):
-                saved_preds[log] = score
+            save_cached_preds(
+                dict(zip(df_payload["masked_log"], df_payload["nulog_confidence"])),
+                saved_preds,
+            )
 
         else:
             for i in range(0, len(df_payload), max_payload_size):
@@ -196,8 +253,7 @@ async def infer_logs(logs_queue):
                             df_new_logs["nulog_confidence"] = [
                                 pred_scores_dict[ml] for ml in df_new_logs["masked_log"]
                             ]
-                            for ml in pred_scores_dict:
-                                saved_preds[ml] = pred_scores_dict[ml]
+                            save_cached_preds(pred_scores_dict, saved_preds)
                             await update_preds_to_es(df_new_logs)
                             if IS_GPU_SERVICE:
                                 logger.debug("send new results back.")
