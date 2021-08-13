@@ -28,6 +28,7 @@ THRESHOLD = float(os.getenv("MODEL_THRESHOLD", 0.7))
 ES_ENDPOINT = os.environ["ES_ENDPOINT"]
 ES_USERNAME = os.getenv("ES_USERNAME", "admin")
 ES_PASSWORD = os.getenv("ES_PASSWORD", "admin")
+S3_BUCKET = os.getenv("S3_BUCKET", "opni-nulog-models")
 IS_CONTROL_PLANE_SERVICE = bool(os.getenv("IS_CONTROL_PLANE_SERVICE", False))
 IS_GPU_SERVICE = bool(os.getenv("IS_GPU_SERVICE", False))
 
@@ -130,7 +131,7 @@ async def infer_logs(logs_queue):
 
         start_time = time.time()
         decoded_payload = json.loads(payload)
-        if "bucket" in decoded_payload and decoded_payload["bucket"] == "nulog-models":
+        if "bucket" in decoded_payload and decoded_payload["bucket"] == S3_BUCKET:
             # signal to reload model
             if IS_CONTROL_PLANE_SERVICE:
                 nulog_predictor.load(save_path="control-plane-output/")
@@ -261,7 +262,7 @@ async def schedule_update_pretrain_model(logs_queue):
         update_status = await get_pretrain_model()
         if update_status:
             logs_queue.put(
-                json.dumps({"bucket": "nulog-models"})
+                json.dumps({"bucket": S3_BUCKET})
             )  # send a signal to reload model
 
 

@@ -25,7 +25,7 @@ S3_BUCKET = os.getenv("S3_BUCKET", "opni-nulog-models")
 TRAINING_DATA_PATH = os.getenv("TRAINING_DATA_PATH", "/var/opni-data")
 
 
-def train_nulog_model(minio_client, windows_folder_path):
+def train_nulog_model(s3_client, windows_folder_path):
     nr_epochs = 3
     num_samples = 0
     parser = LogParser()
@@ -36,13 +36,13 @@ def train_nulog_model(minio_client, windows_folder_path):
     all_files = os.listdir("output/")
     if "nulog_model_latest.pt" in all_files and "vocab.txt" in all_files:
         logger.debug("Completed training model")
-        minio_client.meta.client.upload_file(
-            "output/nulog_model_latest.pt", "nulog-models", "nulog_model_latest.pt"
+        s3_client.meta.client.upload_file(
+            "output/nulog_model_latest.pt", S3_BUCKET, "nulog_model_latest.pt"
         )
-        minio_client.meta.client.upload_file(
-            "output/vocab.txt", "nulog-models", "vocab.txt"
+        s3_client.meta.client.upload_file(
+            "output/vocab.txt", S3_BUCKET, "vocab.txt"
         )
-        logger.info("Nulog model and vocab have been uploaded to Minio.")
+        logger.info("Nulog model and vocab have been uploaded to S3.")
     else:
         logger.error("Nulog model was not able to be trained and saved successfully.")
         return False
@@ -51,13 +51,13 @@ def train_nulog_model(minio_client, windows_folder_path):
 def s3_setup(s3_client):
     try:
         s3_client.meta.client.head_bucket(Bucket=S3_BUCKET)
-        logger.debug("nulog-models bucket exists")
+        logger.debug("{S3_BUCKET} bucket exists")
     except botocore.exceptions.ClientError as e:
         # If a client error is thrown, then check that it was a 404 error.
         # If it was a 404 error, then the bucket does not exist.
         error_code = e.response["Error"]["Code"]
         if error_code == "404":
-            logger.warning("nulog-models bucket does not exist so creating it now")
+            logger.warning("{S3_BUCKET} bucket does not exist so creating it now")
             s3_client.create_bucket(Bucket=S3_BUCKET)
     return True
 
@@ -67,7 +67,7 @@ async def send_signal_to_nats(nw):
     )  ## tells the GPU service that a training job done.
 
     nulog_payload = {
-        "bucket": "nulog-models",
+        "bucket": S3_BUCKET,
         "bucket_files": {
             "model_file": "nulog_model_latest.pt",
             "vocab_file": "vocab.txt",
@@ -88,11 +88,11 @@ async def consume_signal(job_queue, nw):
 
 
 async def train_model(job_queue, nw):
-    minio_client = boto3.resource(
+    s3_client = boto3.resource(
         "s3",
-        endpoint_url=MINIO_ENDPOINT,
-        aws_access_key_id=MINIO_ACCESS_KEY,
-        aws_secret_access_key=MINIO_SECRET_KEY,
+        endpoint_url=S3_ENDPOINT,
+        aws_access_key_id=S3_ACCESS_KEY,
+        aws_secret_access_key=S3_SECRET_KEY,
         config=Config(signature_version="s3v4"),
     )
     windows_folder_path = os.path.join(TRAINING_DATA_PATH, "windows")
