@@ -166,6 +166,18 @@ def save_cached_preds(new_preds: dict, saved_preds: dict):
             logger.error("Failed to update predictions to minio.")
 
 
+def reset_cached_preds(saved_preds: dict):
+    bucket_name = "nulog-models"
+    saved_preds.clear()
+    try:
+        os.remove(CACHED_PREDS_SAVEFILE)
+        minio_client.meta.client.delete_object(
+            Bucket=bucket_name, Key=CACHED_PREDS_SAVEFILE
+        )
+    except Exception as e:
+        logger.error("cached preds files failed to delete.")
+
+
 async def infer_logs(logs_queue):
     """
     coroutine to get payload from logs_queue, call inference rest API and put predictions to elasticsearch.
@@ -194,6 +206,7 @@ async def infer_logs(logs_queue):
             else:
                 nulog_predictor.download_from_minio(decoded_payload)
                 nulog_predictor.load()
+            reset_cached_preds(saved_preds)
             continue
 
         df_payload = pd.read_json(payload, dtype={"_id": object})
