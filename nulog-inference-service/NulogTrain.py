@@ -102,8 +102,6 @@ async def train_model(job_queue, nw):
         res_s3_setup = s3_setup(s3_client)
         res_train_model = train_nulog_model(s3_client, windows_folder_path)
         if res_train_model:
-            #Clean windows
-            shutil.rmtree(windows_folder_path)
             await send_signal_to_nats(nw)
         ## TODO: what to do if model training ever failed?
 
