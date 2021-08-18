@@ -14,11 +14,12 @@ logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__file__)
 logger.setLevel(LOGGING_LEVEL)
 
-MINIO_ACCESS_KEY = os.environ["MINIO_ACCESS_KEY"]
-MINIO_SECRET_KEY = os.environ["MINIO_SECRET_KEY"]
-MINIO_ENDPOINT = os.environ["MINIO_ENDPOINT"]
+S3_ACCESS_KEY = os.environ["S3_ACCESS_KEY"]
+S3_SECRET_KEY = os.environ["S3_SECRET_KEY"]
+S3_ENDPOINT = os.environ["S3_ENDPOINT"]
+S3_BUCKET = os.getenv("S3_BUCKET", "opni-nulog-models")
 DEFAULT_MODELREADY_PAYLOAD = {
-    "bucket": "nulog-models",
+    "bucket": S3_BUCKET,
     "bucket_files": {
         "model_file": "nulog_model_latest.pt",
         "vocab_file": "vocab.txt",
@@ -32,15 +33,15 @@ class NulogServer:
         self.is_ready = False
         self.parser = None
 
-    def download_from_minio(
+    def download_from_s3(
         self,
         decoded_payload: dict = DEFAULT_MODELREADY_PAYLOAD,
     ):
-        minio_client = boto3.resource(
+        s3_client = boto3.resource(
             "s3",
-            endpoint_url=MINIO_ENDPOINT,
-            aws_access_key_id=MINIO_ACCESS_KEY,
-            aws_secret_access_key=MINIO_SECRET_KEY,
+            endpoint_url=S3_ENDPOINT,
+            aws_access_key_id=S3_ACCESS_KEY,
+            aws_secret_access_key=S3_SECRET_KEY,
             config=Config(signature_version="s3v4"),
         )
         if not os.path.exists("output/"):
@@ -50,7 +51,7 @@ class NulogServer:
         bucket_files = decoded_payload["bucket_files"]
         for k in bucket_files:
             try:
-                minio_client.meta.client.download_file(
+                s3_client.meta.client.download_file(
                     bucket_name, bucket_files[k], f"output/{bucket_files[k]}"
                 )
             except Exception as e:
