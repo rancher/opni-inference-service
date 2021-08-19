@@ -17,8 +17,9 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 from elasticsearch import AsyncElasticsearch
 from elasticsearch.helpers import async_bulk
+from HyperParamaters import HyperParameters
 from nats.aio.errors import ErrTimeout
-from NulogServer import NulogServer
+from NulogServer import MIN_LOG_TOKENS, NulogServer
 from NulogTrain import consume_signal, train_model
 from opni_nats import NatsWrapper
 
@@ -27,7 +28,9 @@ logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__file__)
 logger.setLevel(LOGGING_LEVEL)
 
-THRESHOLD = float(os.getenv("MODEL_THRESHOLD", 0.7))
+params = HyperParameters()
+THRESHOLD = params.MODEL_THRESHOLD
+MIN_LOG_TOKENS = params.MIN_LOG_TOKENS
 ES_ENDPOINT = os.environ["ES_ENDPOINT"]
 ES_USERNAME = os.getenv("ES_USERNAME", "admin")
 ES_PASSWORD = os.getenv("ES_PASSWORD", "admin")
@@ -71,7 +74,6 @@ script_source += "ctx._source.nulog_confidence = params['nulog_score'];"
 script_for_anomaly = (
     "ctx._source.anomaly_predicted_count += 1; ctx._source.nulog_anomaly = true;"
 )
-
 
 async def consume_logs(logs_queue):
     """
@@ -277,7 +279,7 @@ async def infer_logs(logs_queue):
                         logger.debug(
                             f" {len(unique_masked_logs)} unique logs to inference."
                         )
-                        pred_scores_dict = nulog_predictor.predict(unique_masked_logs)
+                        pred_scores_dict = nulog_predictor.predict(MIN_LOG_TOKENS, unique_masked_logs)
 
                         if pred_scores_dict is None:
                             logger.warning("fail to make predictions.")

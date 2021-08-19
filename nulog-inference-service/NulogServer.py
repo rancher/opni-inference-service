@@ -72,7 +72,7 @@ class NulogServer:
         except Exception as e:
             logger.error(f"No Nulog model currently {e}")
 
-    def predict(self, logs: List[str]):
+    def predict(self, min_log_tokens, logs: List[str]):
         """
         logs: masked logs
         """
@@ -84,7 +84,7 @@ class NulogServer:
         output = []
         for log in logs:
             tokens = self.parser.tokenize_data([log], isTrain=False)
-            if len(tokens[0]) < MIN_LOG_TOKENS:
+            if len(tokens[0]) < min_log_tokens:
                 output.append(1)
             else:
                 pred = (self.parser.predict(tokens))[0]
