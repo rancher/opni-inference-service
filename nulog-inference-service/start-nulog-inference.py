@@ -30,7 +30,11 @@ logger.setLevel(LOGGING_LEVEL)
 
 params = HyperParameters()
 THRESHOLD = params.MODEL_THRESHOLD
+if "MODEL_THRESHOLD" in os.environ:
+    THRESHOLD = os.environ["MODEL_THRESHOLD"]
 MIN_LOG_TOKENS = params.MIN_LOG_TOKENS
+if "MIN_LOG_TOKENS" in os.environ:
+    MIN_LOG_TOKENS = os.environ["MIN_LOG_TOKENS"]
 ES_ENDPOINT = os.environ["ES_ENDPOINT"]
 ES_USERNAME = os.getenv("ES_USERNAME", "admin")
 ES_PASSWORD = os.getenv("ES_PASSWORD", "admin")
