@@ -1,7 +1,6 @@
 # Standard Library
 import logging
 import os
-import re
 import time
 
 # Third Party
@@ -266,10 +265,12 @@ class LogParser:
         return test_dataloader
 
     def load_data(self, windows_folder_path):
-        df_log = self.log_to_dataframe(
-            windows_folder_path
-        )
-        return [df_log.iloc[i].Content for i in range(df_log.shape[0])]
+        try:
+            df_log = self.log_to_dataframe(windows_folder_path)
+            return [df_log.iloc[i].Content for i in range(df_log.shape[0])]
+        except Exception as e:
+            logging.error("Unable to fetch data.")
+            return []
 
     def tokenize_data(self, input_text, isTrain=False):
         data_tokenized = []
@@ -299,7 +300,6 @@ class LogParser:
         logdf.insert(0, "LineId", None)
         logdf["LineId"] = [i + 1 for i in range(len(all_log_messages))]
         return logdf
-
 
     def do_mask(self, batch):
         c = copy.deepcopy

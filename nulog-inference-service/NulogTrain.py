@@ -9,7 +9,6 @@ import shutil
 import boto3
 import botocore
 from botocore.client import Config
-from botocore.exceptions import EndpointConnectionError
 from NuLogParser import LogParser
 from opni_nats import NatsWrapper
 
@@ -29,7 +28,11 @@ def train_nulog_model(s3_client, windows_folder_path):
     nr_epochs = 3
     num_samples = 0
     parser = LogParser()
-    texts = parser.load_data(windows_folder_path)
+    try:
+        texts = parser.load_data(windows_folder_path)
+    except Exception as e:
+        logging.error("Unable to load data.")
+        return False
     if len(texts) > 0:
         try:
             tokenized = parser.tokenize_data(texts, isTrain=True)
@@ -48,7 +51,9 @@ def train_nulog_model(s3_client, windows_folder_path):
                 shutil.rmtree("output/")
                 return True
             else:
-                logger.error("Nulog model was not able to be trained and saved successfully.")
+                logger.error(
+                    "Nulog model was not able to be trained and saved successfully."
+                )
                 return False
         except Exception as e:
             logger.error("Nulog model was not able to be trained.")
@@ -56,6 +61,7 @@ def train_nulog_model(s3_client, windows_folder_path):
     else:
         logger.info("Cannot train Nulog model as there was no training data present.")
         return False
+
 
 def s3_setup(s3_client):
     try:
@@ -70,12 +76,14 @@ def s3_setup(s3_client):
             s3_client.create_bucket(Bucket=S3_BUCKET)
     return True
 
-async def send_signal_to_nats(nw, training_success):
-    await nw.connect()
-    await nw.publish(
-        "gpu_trainingjob_status", b"JobEnd"
-    )  ## tells the GPU service that a training job done.
 
+async def send_signal_to_nats(nw, training_success):
+    # Function that will send signal to Nats subjects gpu_trainingjob_status and model_ready.
+    await nw.connect()
+    # Regardless of a successful training of Nulog model, send JobEnd message to Nats subject gpu_trainingjob_status to make GPU available again.
+    await nw.publish("gpu_trainingjob_status", b"JobEnd")
+
+    # If Nulog model has been successfully trained, send payload to model_ready Nats subject that new model is ready to be uploaded from Minio.
     if training_success:
         nulog_payload = {
             "bucket": S3_BUCKET,
@@ -114,7 +122,6 @@ async def train_model(job_queue, nw):
         res_s3_setup = s3_setup(s3_client)
         model_trained_success = train_nulog_model(s3_client, windows_folder_path)
         await send_signal_to_nats(nw, model_trained_success)
-        ## TODO: what to do if model training ever failed?
 
 
 async def init_nats(nw):
