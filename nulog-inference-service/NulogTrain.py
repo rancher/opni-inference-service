@@ -30,23 +30,32 @@ def train_nulog_model(s3_client, windows_folder_path):
     num_samples = 0
     parser = LogParser()
     texts = parser.load_data(windows_folder_path)
-    tokenized = parser.tokenize_data(texts, isTrain=True)
-    parser.tokenizer.save_vocab()
-    parser.train(tokenized, nr_epochs=nr_epochs, num_samples=num_samples)
-    all_files = os.listdir("output/")
-    if "nulog_model_latest.pt" in all_files and "vocab.txt" in all_files:
-        logger.debug("Completed training model")
-        s3_client.meta.client.upload_file(
-            "output/nulog_model_latest.pt", S3_BUCKET, "nulog_model_latest.pt"
-        )
-        s3_client.meta.client.upload_file(
-            "output/vocab.txt", S3_BUCKET, "vocab.txt"
-        )
-        logger.info("Nulog model and vocab have been uploaded to S3.")
+    if len(texts) > 0:
+        try:
+            tokenized = parser.tokenize_data(texts, isTrain=True)
+            parser.tokenizer.save_vocab()
+            parser.train(tokenized, nr_epochs=nr_epochs, num_samples=num_samples)
+            all_files = os.listdir("output/")
+            if "nulog_model_latest.pt" in all_files and "vocab.txt" in all_files:
+                logger.debug("Completed training model")
+                s3_client.meta.client.upload_file(
+                    "output/nulog_model_latest.pt", S3_BUCKET, "nulog_model_latest.pt"
+                )
+                s3_client.meta.client.upload_file(
+                    "output/vocab.txt", S3_BUCKET, "vocab.txt"
+                )
+                logger.info("Nulog model and vocab have been uploaded to S3.")
+                shutil.rmtree("output/")
+                return True
+            else:
+                logger.error("Nulog model was not able to be trained and saved successfully.")
+                return False
+        except Exception as e:
+            logger.error("Nulog model was not able to be trained.")
+            return False
     else:
-        logger.error("Nulog model was not able to be trained and saved successfully.")
+        logger.info("Cannot train Nulog model as there was no training data present.")
         return False
-    return True
 
 def s3_setup(s3_client):
     try:
@@ -61,24 +70,27 @@ def s3_setup(s3_client):
             s3_client.create_bucket(Bucket=S3_BUCKET)
     return True
 
-async def send_signal_to_nats(nw):
+async def send_signal_to_nats(nw, training_success):
+    await nw.connect()
     await nw.publish(
         "gpu_trainingjob_status", b"JobEnd"
     )  ## tells the GPU service that a training job done.
 
-    nulog_payload = {
-        "bucket": S3_BUCKET,
-        "bucket_files": {
-            "model_file": "nulog_model_latest.pt",
-            "vocab_file": "vocab.txt",
-        },
-    }
-    await nw.publish(
-        nats_subject="model_ready", payload_df=json.dumps(nulog_payload).encode()
-    )
-    logger.info(
-        "Published to model_ready Nats subject that new Nulog model is ready to be used for inferencing."
-    )
+    if training_success:
+        nulog_payload = {
+            "bucket": S3_BUCKET,
+            "bucket_files": {
+                "model_file": "nulog_model_latest.pt",
+                "vocab_file": "vocab.txt",
+            },
+        }
+        await nw.connect()
+        await nw.publish(
+            nats_subject="model_ready", payload_df=json.dumps(nulog_payload).encode()
+        )
+        logger.info(
+            "Published to model_ready Nats subject that new Nulog model is ready to be used for inferencing."
+        )
 
 
 async def consume_signal(job_queue, nw):
@@ -100,9 +112,8 @@ async def train_model(job_queue, nw):
         new_job = await job_queue.get()  ## TODO: should the metadata being used?
 
         res_s3_setup = s3_setup(s3_client)
-        res_train_model = train_nulog_model(s3_client, windows_folder_path)
-        if res_train_model:
-            await send_signal_to_nats(nw)
+        model_trained_success = train_nulog_model(s3_client, windows_folder_path)
+        await send_signal_to_nats(nw, model_trained_success)
         ## TODO: what to do if model training ever failed?
 
 
