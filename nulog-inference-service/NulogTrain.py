@@ -66,7 +66,7 @@ def train_nulog_model(s3_client, windows_folder_path):
             logger.error("Nulog model was not able to be trained.")
             return False
     else:
-        logger.info("Cannot train Nulog model as there was no training data present.")
+        logger.error("Cannot train Nulog model as there was no training data present.")
         return False
 
 
