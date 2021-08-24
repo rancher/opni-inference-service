@@ -19,7 +19,7 @@ from elasticsearch import AsyncElasticsearch
 from elasticsearch.helpers import async_bulk
 from HyperParamaters import HyperParameters
 from nats.aio.errors import ErrTimeout
-from NulogServer import MIN_LOG_TOKENS, NulogServer
+from NulogServer import NulogServer
 from NulogTrain import consume_signal, train_model
 from opni_nats import NatsWrapper
 
@@ -31,10 +31,10 @@ logger.setLevel(LOGGING_LEVEL)
 params = HyperParameters()
 THRESHOLD = params.MODEL_THRESHOLD
 if "MODEL_THRESHOLD" in os.environ:
-    THRESHOLD = os.environ["MODEL_THRESHOLD"]
+    THRESHOLD = float(os.environ["MODEL_THRESHOLD"])
 MIN_LOG_TOKENS = params.MIN_LOG_TOKENS
 if "MIN_LOG_TOKENS" in os.environ:
-    MIN_LOG_TOKENS = os.environ["MIN_LOG_TOKENS"]
+    MIN_LOG_TOKENS = int(os.environ["MIN_LOG_TOKENS"])
 ES_ENDPOINT = os.environ["ES_ENDPOINT"]
 ES_USERNAME = os.getenv("ES_USERNAME", "admin")
 ES_PASSWORD = os.getenv("ES_PASSWORD", "admin")
@@ -283,7 +283,7 @@ async def infer_logs(logs_queue):
                         logger.debug(
                             f" {len(unique_masked_logs)} unique logs to inference."
                         )
-                        pred_scores_dict = nulog_predictor.predict(MIN_LOG_TOKENS, unique_masked_logs)
+                        pred_scores_dict = nulog_predictor.predict(unique_masked_logs)
 
                         if pred_scores_dict is None:
                             logger.warning("fail to make predictions.")
