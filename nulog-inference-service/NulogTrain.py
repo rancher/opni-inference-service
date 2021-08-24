@@ -25,14 +25,21 @@ TRAINING_DATA_PATH = os.getenv("TRAINING_DATA_PATH", "/var/opni-data")
 
 
 def train_nulog_model(s3_client, windows_folder_path):
+    """
+    This function will be used to load the training data and then train the new Nulog model.
+    If during this process, there is any exception, it will return False indicating that a new Nulog model failed to
+    train. Otherwise, it will return True.
+    """
     nr_epochs = 3
     num_samples = 0
     parser = LogParser()
+    # Load the training data.
     try:
         texts = parser.load_data(windows_folder_path)
     except Exception as e:
         logging.error("Unable to load data.")
         return False
+    # Check to see if the length of the training data is at least 1. Otherwise, return False.
     if len(texts) > 0:
         try:
             tokenized = parser.tokenize_data(texts, isTrain=True)
@@ -64,6 +71,7 @@ def train_nulog_model(s3_client, windows_folder_path):
 
 
 def s3_setup(s3_client):
+    # Function to set up a S3 bucket if it does not already exist.
     try:
         s3_client.meta.client.head_bucket(Bucket=S3_BUCKET)
         logger.debug("{S3_BUCKET} bucket exists")
@@ -102,12 +110,21 @@ async def send_signal_to_nats(nw, training_success):
 
 
 async def consume_signal(job_queue, nw):
+    """
+    This function subscribes to the Nats subject gpu_service_training_internal which will receive payload when it is
+    time to train a new Nulog model.
+    """
     await nw.subscribe(
         nats_subject="gpu_service_training_internal", payload_queue=job_queue
     )
 
 
 async def train_model(job_queue, nw):
+    """
+    This function will monitor the jobs_queue to see if any new training signal has been received. If it receives the
+    signal, it will kick off a new training job and upon successful or failed training of a new Nulog model, call
+    the send_signal_to_nats method to send payload to the appropriate Nats subjects.
+    """
     s3_client = boto3.resource(
         "s3",
         endpoint_url=S3_ENDPOINT,
