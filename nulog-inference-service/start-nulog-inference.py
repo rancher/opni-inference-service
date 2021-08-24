@@ -132,7 +132,7 @@ async def update_preds_to_es(df):
 
 def load_cached_preds(saved_preds: dict):
 
-    bucket_name = "S3_BUCKET"
+    bucket_name = S3_BUCKET
     try:
         s3_client.meta.client.download_file(
             bucket_name, CACHED_PREDS_SAVEFILE, CACHED_PREDS_SAVEFILE
@@ -149,7 +149,7 @@ def load_cached_preds(saved_preds: dict):
 
 def save_cached_preds(new_preds: dict, saved_preds: dict):
     update_to_s3 = False
-    bucket_name = "S3_BUCKET"
+    bucket_name = S3_BUCKET
     with open(CACHED_PREDS_SAVEFILE, "a") as fout:
         for ml in new_preds:
             logger.debug("ml :" + str(ml))
@@ -168,7 +168,7 @@ def save_cached_preds(new_preds: dict, saved_preds: dict):
 
 
 def reset_cached_preds(saved_preds: dict):
-    bucket_name = "S3_BUCKET"
+    bucket_name = S3_BUCKET
     saved_preds.clear()
     try:
         os.remove(CACHED_PREDS_SAVEFILE)
