@@ -43,6 +43,7 @@ CACHED_PREDS_SAVEFILE = (
     if IS_GPU_SERVICE
     else "cpu-preds.txt"
 )
+SAVE_FREQ = 25
 
 nw = NatsWrapper()
 es = AsyncElasticsearch(
@@ -155,7 +156,7 @@ def save_cached_preds(new_preds: dict, saved_preds: dict):
             logger.debug("ml :" + str(ml))
             saved_preds[ml] = new_preds[ml]
             fout.write(ml + "\t" + str(new_preds[ml]) + "\n")
-            if len(saved_preds) % 100 == 0:
+            if len(saved_preds) % SAVE_FREQ == 0:
                 update_to_s3 = True
     logger.debug(f"saved cached preds, current num of cache: {len(saved_preds)}")
     if update_to_s3:
