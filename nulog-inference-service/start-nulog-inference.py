@@ -14,6 +14,7 @@ import boto3
 import numpy as np
 import pandas as pd
 from botocore.config import Config
+from botocore.exceptions import ClientError
 from elasticsearch import AsyncElasticsearch
 from elasticsearch.helpers import async_bulk
 from nats.aio.errors import ErrTimeout
@@ -131,6 +132,21 @@ async def update_preds_to_es(df):
         logger.error(e)
 
 
+def s3_setup(s3_client):
+    # Function to set up a S3 bucket if it does not already exist.
+    try:
+        s3_client.meta.client.head_bucket(Bucket=S3_BUCKET)
+        logger.debug("{S3_BUCKET} bucket exists")
+    except ClientError as e:
+        # If a client error is thrown, then check that it was a 404 error.
+        # If it was a 404 error, then the bucket does not exist.
+        error_code = e.response["Error"]["Code"]
+        if error_code == "404":
+            logger.warning("{S3_BUCKET} bucket does not exist so creating it now")
+            s3_client.create_bucket(Bucket=S3_BUCKET)
+    return True
+
+
 def load_cached_preds(saved_preds: dict):
 
     bucket_name = S3_BUCKET
@@ -184,6 +200,7 @@ async def infer_logs(logs_queue):
     """
     coroutine to get payload from logs_queue, call inference rest API and put predictions to elasticsearch.
     """
+    s3_setup(s3_client)
     saved_preds = defaultdict(float)
     load_cached_preds(saved_preds)
     nulog_predictor = NulogServer()
