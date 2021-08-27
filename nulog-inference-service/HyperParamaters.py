@@ -6,6 +6,8 @@ class HyperParameters:
         self._MIN_LOG_TOKENS = int(1)
         f = open('/etc/opni/hyperparameters.json', 'r')
         data = json.load(f)
+        if data is None:
+            return
         if "hyperparameters" not in data:
             return
         hyperparameters = data["hyperparameters"]
