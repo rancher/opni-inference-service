@@ -10,8 +10,11 @@ import zipfile
 from collections import defaultdict
 
 # Third Party
+import boto3
 import numpy as np
 import pandas as pd
+from botocore.config import Config
+from botocore.exceptions import ClientError
 from elasticsearch import AsyncElasticsearch
 from elasticsearch.helpers import async_bulk
 from nats.aio.errors import ErrTimeout
@@ -28,9 +31,20 @@ THRESHOLD = float(os.getenv("MODEL_THRESHOLD", 0.7))
 ES_ENDPOINT = os.environ["ES_ENDPOINT"]
 ES_USERNAME = os.getenv("ES_USERNAME", "admin")
 ES_PASSWORD = os.getenv("ES_PASSWORD", "admin")
+S3_ENDPOINT = os.environ["S3_ENDPOINT"]
+S3_ACCESS_KEY = os.environ["S3_ACCESS_KEY"]
+S3_SECRET_KEY = os.environ["S3_SECRET_KEY"]
 S3_BUCKET = os.getenv("S3_BUCKET", "opni-nulog-models")
 IS_CONTROL_PLANE_SERVICE = bool(os.getenv("IS_CONTROL_PLANE_SERVICE", False))
 IS_GPU_SERVICE = bool(os.getenv("IS_GPU_SERVICE", False))
+CACHED_PREDS_SAVEFILE = (
+    "control-plane-preds.txt"
+    if IS_CONTROL_PLANE_SERVICE
+    else "gpu-preds.txt"
+    if IS_GPU_SERVICE
+    else "cpu-preds.txt"
+)
+SAVE_FREQ = 25
 
 nw = NatsWrapper()
 es = AsyncElasticsearch(
@@ -40,6 +54,13 @@ es = AsyncElasticsearch(
     http_auth=(ES_USERNAME, ES_PASSWORD),
     verify_certs=False,
     use_ssl=True,
+)
+s3_client = boto3.resource(
+    "s3",
+    endpoint_url=S3_ENDPOINT,
+    aws_access_key_id=S3_ACCESS_KEY,
+    aws_secret_access_key=S3_SECRET_KEY,
+    config=Config(signature_version="s3v4"),
 )
 
 if IS_CONTROL_PLANE_SERVICE:
@@ -111,11 +132,77 @@ async def update_preds_to_es(df):
         logger.error(e)
 
 
+def s3_setup(s3_client):
+    # Function to set up a S3 bucket if it does not already exist.
+    try:
+        s3_client.meta.client.head_bucket(Bucket=S3_BUCKET)
+        logger.debug(f"{S3_BUCKET} bucket exists")
+    except ClientError as e:
+        # If a client error is thrown, then check that it was a 404 error.
+        # If it was a 404 error, then the bucket does not exist.
+        error_code = e.response["Error"]["Code"]
+        if error_code == "404":
+            logger.warning(f"{S3_BUCKET} bucket does not exist so creating it now")
+            s3_client.create_bucket(Bucket=S3_BUCKET)
+    return True
+
+
+def load_cached_preds(saved_preds: dict):
+
+    bucket_name = S3_BUCKET
+    try:
+        s3_client.meta.client.download_file(
+            bucket_name, CACHED_PREDS_SAVEFILE, CACHED_PREDS_SAVEFILE
+        )
+        with open(CACHED_PREDS_SAVEFILE) as fin:
+            for line in fin:
+                ml, score = line.split("\t")
+                saved_preds[ml] = float(score)
+    except Exception as e:
+        logger.error("cached preds files do not exist.")
+    logger.debug(f"loaded from cached preds: {len(saved_preds)}")
+    return saved_preds
+
+
+def save_cached_preds(new_preds: dict, saved_preds: dict):
+    update_to_s3 = False
+    bucket_name = S3_BUCKET
+    with open(CACHED_PREDS_SAVEFILE, "a") as fout:
+        for ml in new_preds:
+            logger.debug("ml :" + str(ml))
+            saved_preds[ml] = new_preds[ml]
+            fout.write(ml + "\t" + str(new_preds[ml]) + "\n")
+            if len(saved_preds) % SAVE_FREQ == 0:
+                update_to_s3 = True
+    logger.debug(f"saved cached preds, current num of cache: {len(saved_preds)}")
+    if update_to_s3:
+        try:
+            s3_client.meta.client.upload_file(
+                CACHED_PREDS_SAVEFILE, bucket_name, CACHED_PREDS_SAVEFILE
+            )
+        except Exception as e:
+            logger.error("Failed to update predictions to s3.")
+
+
+def reset_cached_preds(saved_preds: dict):
+    bucket_name = S3_BUCKET
+    saved_preds.clear()
+    try:
+        os.remove(CACHED_PREDS_SAVEFILE)
+        s3_client.meta.client.delete_object(
+            Bucket=bucket_name, Key=CACHED_PREDS_SAVEFILE
+        )
+    except Exception as e:
+        logger.error("cached preds files failed to delete.")
+
+
 async def infer_logs(logs_queue):
     """
     coroutine to get payload from logs_queue, call inference rest API and put predictions to elasticsearch.
     """
+    s3_setup(s3_client)
     saved_preds = defaultdict(float)
+    load_cached_preds(saved_preds)
     nulog_predictor = NulogServer()
     if IS_CONTROL_PLANE_SERVICE:
         nulog_predictor.load(save_path="control-plane-output/")
@@ -138,6 +225,7 @@ async def infer_logs(logs_queue):
             else:
                 nulog_predictor.download_from_s3(decoded_payload)
                 nulog_predictor.load()
+            reset_cached_preds(saved_preds)
             continue
 
         df_payload = pd.read_json(payload, dtype={"_id": object})
@@ -145,10 +233,10 @@ async def infer_logs(logs_queue):
             "gpu_service_result" in df_payload.columns
         ):  ## memorize predictions from GPU services.
             logger.debug("saved predictions from GPU service.")
-            for score, log in zip(
-                df_payload["nulog_confidence"], df_payload["masked_log"]
-            ):
-                saved_preds[log] = score
+            save_cached_preds(
+                dict(zip(df_payload["masked_log"], df_payload["nulog_confidence"])),
+                saved_preds,
+            )
 
         else:
             for i in range(0, len(df_payload), max_payload_size):
@@ -197,8 +285,7 @@ async def infer_logs(logs_queue):
                             df_new_logs["nulog_confidence"] = [
                                 pred_scores_dict[ml] for ml in df_new_logs["masked_log"]
                             ]
-                            for ml in pred_scores_dict:
-                                saved_preds[ml] = pred_scores_dict[ml]
+                            save_cached_preds(pred_scores_dict, saved_preds)
                             await update_preds_to_es(df_new_logs)
                             if IS_GPU_SERVICE:
                                 logger.debug("send new results back.")
