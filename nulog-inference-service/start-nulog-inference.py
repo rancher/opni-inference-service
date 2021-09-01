@@ -35,6 +35,9 @@ if "MODEL_THRESHOLD" in os.environ:
 MIN_LOG_TOKENS = params.MIN_LOG_TOKENS
 if "MIN_LOG_TOKENS" in os.environ:
     MIN_LOG_TOKENS = int(os.environ["MIN_LOG_TOKENS"])
+IS_CONTROL_PLANE_SERVICE = params.IS_CONTROL_PLANE
+if "IS_CONTROL_PLANE" in os.environ:
+    IS_CONTROL_PLANE_SERVICE = bool(os.environ["IS_CONTROL_PLANE_SERVICE"])
 ES_ENDPOINT = os.environ["ES_ENDPOINT"]
 ES_USERNAME = os.getenv("ES_USERNAME", "admin")
 ES_PASSWORD = os.getenv("ES_PASSWORD", "admin")
@@ -42,7 +45,6 @@ S3_ENDPOINT = os.environ["S3_ENDPOINT"]
 S3_ACCESS_KEY = os.environ["S3_ACCESS_KEY"]
 S3_SECRET_KEY = os.environ["S3_SECRET_KEY"]
 S3_BUCKET = os.getenv("S3_BUCKET", "opni-nulog-models")
-IS_CONTROL_PLANE_SERVICE = bool(os.getenv("IS_CONTROL_PLANE_SERVICE", False))
 IS_GPU_SERVICE = bool(os.getenv("IS_GPU_SERVICE", False))
 CACHED_PREDS_SAVEFILE = (
     "control-plane-preds.txt"
@@ -52,6 +54,10 @@ CACHED_PREDS_SAVEFILE = (
     else "cpu-preds.txt"
 )
 SAVE_FREQ = 25
+
+logger.debug(f"model threshold is {THRESHOLD}")
+logger.debug(f"min log tokens is is {MIN_LOG_TOKENS}")
+logger.debug(f"is controlplane is  {IS_CONTROL_PLANE_SERVICE}")
 
 nw = NatsWrapper()
 es = AsyncElasticsearch(
