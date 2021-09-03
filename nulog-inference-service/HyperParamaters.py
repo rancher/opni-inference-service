@@ -6,7 +6,7 @@ class HyperParameters:
         self._MODEL_THRESHOLD = float(0.7)
         self._MIN_LOG_TOKENS = int(1)
         self._IS_CONTROL_PLANE = False
-        if not(os.path.ifile('/etc/opni/hyperparameters.json')):
+        if not(os.path.exists('/etc/opni/hyperparameters.json')):
             return
         f = open('/etc/opni/hyperparameters.json', 'r')
         data = json.load(f)
