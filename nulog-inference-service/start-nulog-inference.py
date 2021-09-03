@@ -215,7 +215,7 @@ async def infer_logs(logs_queue):
     s3_setup(s3_client)
     saved_preds = defaultdict(float)
     load_cached_preds(saved_preds)
-    nulog_predictor = NulogServer()
+    nulog_predictor = NulogServer(MIN_LOG_TOKENS)
     if IS_CONTROL_PLANE_SERVICE:
         nulog_predictor.load(save_path="control-plane-output/")
     else:
