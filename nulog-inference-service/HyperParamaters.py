@@ -1,10 +1,13 @@
 import json
+import os
 
 class HyperParameters:
     def __init__(self):
         self._MODEL_THRESHOLD = float(0.7)
         self._MIN_LOG_TOKENS = int(1)
         self._IS_CONTROL_PLANE = False
+        if not(os.path.ifile('/etc/opni/hyperparameters.json')):
+            return
         f = open('/etc/opni/hyperparameters.json', 'r')
         data = json.load(f)
         if data is None:
