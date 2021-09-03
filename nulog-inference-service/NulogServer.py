@@ -25,13 +25,13 @@ DEFAULT_MODELREADY_PAYLOAD = {
         "vocab_file": "vocab.txt",
     },
 }
-MIN_LOG_TOKENS = int(os.getenv("MIN_LOG_TOKENS", 1))
 
 
 class NulogServer:
-    def __init__(self):
+    def __init__(self, min_log_tokens):
         self.is_ready = False
         self.parser = None
+        self.MIN_LOG_TOKENS = min_log_tokens
 
     def download_from_s3(
         self,
@@ -84,7 +84,7 @@ class NulogServer:
         output = []
         for log in logs:
             tokens = self.parser.tokenize_data([log], isTrain=False)
-            if len(tokens[0]) < MIN_LOG_TOKENS:
+            if len(tokens[0]) < self.MIN_LOG_TOKENS:
                 output.append(1)
             else:
                 pred = (self.parser.predict(tokens))[0]

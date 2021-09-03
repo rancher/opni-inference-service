@@ -17,6 +17,7 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 from elasticsearch import AsyncElasticsearch
 from elasticsearch.helpers import async_bulk
+from HyperParamaters import HyperParameters
 from nats.aio.errors import ErrTimeout
 from NulogServer import NulogServer
 from NulogTrain import consume_signal, train_model
@@ -27,7 +28,16 @@ logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__file__)
 logger.setLevel(LOGGING_LEVEL)
 
-THRESHOLD = float(os.getenv("MODEL_THRESHOLD", 0.7))
+params = HyperParameters()
+THRESHOLD = params.MODEL_THRESHOLD
+if "MODEL_THRESHOLD" in os.environ:
+    THRESHOLD = float(os.environ["MODEL_THRESHOLD"])
+MIN_LOG_TOKENS = params.MIN_LOG_TOKENS
+if "MIN_LOG_TOKENS" in os.environ:
+    MIN_LOG_TOKENS = int(os.environ["MIN_LOG_TOKENS"])
+IS_CONTROL_PLANE_SERVICE = params.IS_CONTROL_PLANE
+if "IS_CONTROL_PLANE" in os.environ:
+    IS_CONTROL_PLANE_SERVICE = bool(os.environ["IS_CONTROL_PLANE_SERVICE"])
 ES_ENDPOINT = os.environ["ES_ENDPOINT"]
 ES_USERNAME = os.getenv("ES_USERNAME", "admin")
 ES_PASSWORD = os.getenv("ES_PASSWORD", "admin")
@@ -35,7 +45,6 @@ S3_ENDPOINT = os.environ["S3_ENDPOINT"]
 S3_ACCESS_KEY = os.environ["S3_ACCESS_KEY"]
 S3_SECRET_KEY = os.environ["S3_SECRET_KEY"]
 S3_BUCKET = os.getenv("S3_BUCKET", "opni-nulog-models")
-IS_CONTROL_PLANE_SERVICE = bool(os.getenv("IS_CONTROL_PLANE_SERVICE", False))
 IS_GPU_SERVICE = bool(os.getenv("IS_GPU_SERVICE", False))
 CACHED_PREDS_SAVEFILE = (
     "control-plane-preds.txt"
@@ -45,6 +54,10 @@ CACHED_PREDS_SAVEFILE = (
     else "cpu-preds.txt"
 )
 SAVE_FREQ = 25
+
+logger.debug(f"model threshold is {THRESHOLD}")
+logger.debug(f"min log tokens is is {MIN_LOG_TOKENS}")
+logger.debug(f"is controlplane is  {IS_CONTROL_PLANE_SERVICE}")
 
 nw = NatsWrapper()
 es = AsyncElasticsearch(
@@ -71,7 +84,6 @@ script_source += "ctx._source.nulog_confidence = params['nulog_score'];"
 script_for_anomaly = (
     "ctx._source.anomaly_predicted_count += 1; ctx._source.nulog_anomaly = true;"
 )
-
 
 async def consume_logs(logs_queue):
     """
@@ -203,7 +215,7 @@ async def infer_logs(logs_queue):
     s3_setup(s3_client)
     saved_preds = defaultdict(float)
     load_cached_preds(saved_preds)
-    nulog_predictor = NulogServer()
+    nulog_predictor = NulogServer(MIN_LOG_TOKENS)
     if IS_CONTROL_PLANE_SERVICE:
         nulog_predictor.load(save_path="control-plane-output/")
     else:
