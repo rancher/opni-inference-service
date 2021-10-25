@@ -30,21 +30,27 @@ def train_nulog_model(s3_client, windows_folder_path):
     If during this process, there is any exception, it will return False indicating that a new Nulog model failed to
     train. Otherwise, it will return True.
     """
-    nr_epochs = 3
+    nr_epochs = 10
     num_samples = 0
     parser = LogParser()
     # Load the training data.
     try:
-        texts = parser.load_data(windows_folder_path)
+        train_texts, validation_texts = parser.load_data(windows_folder_path)
     except Exception as e:
         logging.error("Unable to load data.")
         return False
     # Check to see if the length of the training data is at least 1. Otherwise, return False.
-    if len(texts) > 0:
+    if len(train_texts) > 0 and len(validation_texts) > 0:
         try:
-            tokenized = parser.tokenize_data(texts, isTrain=True)
+            train_tokenized = parser.tokenize_data(train_texts, isTrain=True)
+            validation_tokenized = parser.tokenize_data(validation_texts)
             parser.tokenizer.save_vocab()
-            parser.train(tokenized, nr_epochs=nr_epochs, num_samples=num_samples)
+            parser.train(
+                train_tokenized,
+                validation_tokenized,
+                nr_epochs=nr_epochs,
+                num_samples=num_samples,
+            )
             all_files = os.listdir("output/")
             if "nulog_model_latest.pt" in all_files and "vocab.txt" in all_files:
                 logger.debug("Completed training model")

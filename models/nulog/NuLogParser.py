@@ -70,9 +70,30 @@ class LogParser:
             logging.warning("loading trained model with old format.")
             model.load_state_dict(ckpt)
 
+    def evaluate_model(
+        self, validation_data_tokenized, validation_nulog_threshold=0.97
+    ):
+        validation_data_predictions = []
+        output = []
+        for val_log_tokens in validation_data_tokenized:
+            pred = (self.predict(val_log_tokens))[0]
+            if pred > validation_nulog_threshold:
+                validation_data_predictions.append(1)
+            else:
+                validation_data_predictions.append(0)
+        num_anomalies_predicted = sum(validation_data_predictions)
+        anomaly_predicted_percentage = num_anomalies_predicted / len(
+            validation_data_predictions
+        )
+        logging.info(
+            f"The newly trained model predicted {num_anomalies_predicted} within the validation dataset."
+        )
+        return anomaly_predicted_percentage
+
     def train(
         self,
-        data_tokenized,
+        data_tokenized_train,
+        data_tokenized_val,
         batch_size=32,
         mask_percentage=1.0,
         pad_len=64,
@@ -127,10 +148,11 @@ class LogParser:
             prev_epoch, prev_loss = self.load_model(model, model_opt)
 
         train_dataloader = self.get_train_dataloaders(
-            data_tokenized, transform_to_tensor
+            data_tokenized_train, transform_to_tensor
         )
         ## train if no model
         model.train()
+        last_anomaly_percentage = 1.01
         logging.info(f"#######Training Model within {self.nr_epochs} epochs...######")
         for epoch in range(self.nr_epochs):
             logging.info(f"Epoch: {epoch}")
@@ -139,7 +161,18 @@ class LogParser:
                 model,
                 SimpleLossCompute(model.generator, criterion, model_opt),
             )
-
+            model.eval()
+            current_anomaly_predicted_percentage = self.evaluate_model(
+                data_tokenized_val
+            )
+            model.train()
+            logging.info(
+                f"In epoch {epoch}, predicted {current_anomaly_predicted_percentage * 100}% of validation dataset as an anomaly"
+            )
+            if current_anomaly_predicted_percentage < last_anomaly_percentage:
+                last_anomaly_percentage = current_anomaly_predicted_percentage
+            else:
+                break
         self.save_model(model=model, model_opt=model_opt, epoch=self.nr_epochs, loss=0)
         # torch.save(model.state_dict(), "nulog_model_latest.pt")
 
@@ -264,10 +297,12 @@ class LogParser:
         )
         return test_dataloader
 
-    def load_data(self, windows_folder_path):
+    def load_data(self, windows_folder_path, data_split=0.8):
         try:
             df_log = self.log_to_dataframe(windows_folder_path)
-            return [df_log.iloc[i].Content for i in range(df_log.shape[0])]
+            all_data = [df_log.iloc[i].Content for i in range(df_log.shape[0])]
+            training_size = int(len(all_data) * data_split)
+            return all_data[:training_size], all_data[training_size:]
         except Exception as e:
             logging.error("Unable to fetch data.")
             return []
