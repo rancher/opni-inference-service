@@ -57,7 +57,7 @@ SAVE_FREQ = 25
 
 logger.debug(f"model threshold is {THRESHOLD}")
 logger.debug(f"min log tokens is is {MIN_LOG_TOKENS}")
-logger.debug(f"is controlplane is  {IS_CONTROL_PLANE_SERVICE}")
+logger.info(f"is controlplane is  {IS_CONTROL_PLANE_SERVICE}")
 
 nw = NatsWrapper()
 es = AsyncElasticsearch(
@@ -84,6 +84,7 @@ script_source += "ctx._source.nulog_confidence = params['nulog_score'];"
 script_for_anomaly = (
     "ctx._source.anomaly_predicted_count += 1; ctx._source.nulog_anomaly = true;"
 )
+
 
 async def consume_logs(logs_queue):
     """
@@ -244,7 +245,7 @@ async def infer_logs(logs_queue):
         if (
             "gpu_service_result" in df_payload.columns
         ):  ## memorize predictions from GPU services.
-            logger.debug("saved predictions from GPU service.")
+            logger.info("saved predictions from GPU service.")
             save_cached_preds(
                 dict(zip(df_payload["masked_log"], df_payload["nulog_confidence"])),
                 saved_preds,
@@ -263,7 +264,7 @@ async def infer_logs(logs_queue):
                     ]
                     await update_preds_to_es(df_cached_logs)
                     if IS_GPU_SERVICE:
-                        logger.debug("send cached results back.")
+                        logger.info("send cached results back.")
                         df_cached_logs["gpu_service_result"] = True
                         await nw.publish(
                             nats_subject="gpu_service_predictions",
@@ -282,11 +283,11 @@ async def infer_logs(logs_queue):
                         except ErrTimeout:
                             logger.warning("request to GPU service timeout.")
                             response = "NO"
-                        logger.debug(f"{response} for GPU service")
+                        logger.info(f"{response} for GPU service")
 
                     if IS_GPU_SERVICE or IS_CONTROL_PLANE_SERVICE or response == "NO":
                         unique_masked_logs = list(df_new_logs["masked_log"].unique())
-                        logger.debug(
+                        logger.info(
                             f" {len(unique_masked_logs)} unique logs to inference."
                         )
                         pred_scores_dict = nulog_predictor.predict(unique_masked_logs)
@@ -300,7 +301,7 @@ async def infer_logs(logs_queue):
                             save_cached_preds(pred_scores_dict, saved_preds)
                             await update_preds_to_es(df_new_logs)
                             if IS_GPU_SERVICE:
-                                logger.debug("send new results back.")
+                                logger.info("send new results back.")
                                 df_new_logs["gpu_service_result"] = True
                                 await nw.publish(
                                     nats_subject="gpu_service_predictions",
