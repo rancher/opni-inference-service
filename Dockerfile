@@ -1,8 +1,7 @@
 FROM rancher/opni-python-base:3.8-torch
 
-RUN apt-get update \
-    && apt-get install -y wget zip \
-    && apt-get clean
+RUN zypper --non-interactive in wget && \
+    zypper --non-interactive in zip
 
 COPY ./nulog-inference-service/ /app/
 COPY ./models/nulog/ /app/
