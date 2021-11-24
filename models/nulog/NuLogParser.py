@@ -267,7 +267,7 @@ class LogParser:
     def load_data(self, windows_folder_path):
         try:
             df_log = self.log_to_dataframe(windows_folder_path)
-            return [df_log.iloc[i].Content for i in range(df_log.shape[0])]
+            return df_log[~df_log["Content"].isnull()]["Content"].tolist()
         except Exception as e:
             logging.error("Unable to fetch data.")
             return []

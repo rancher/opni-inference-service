@@ -92,6 +92,7 @@ async def send_signal_to_nats(nw, training_success):
     await nw.publish("gpu_trainingjob_status", b"JobEnd")
 
     # If Nulog model has been successfully trained, send payload to model_ready Nats subject that new model is ready to be uploaded from Minio.
+    logger.info(f"training status : {training_success}")
     if training_success:
         nulog_payload = {
             "bucket": S3_BUCKET,
@@ -135,7 +136,7 @@ async def train_model(job_queue, nw):
     windows_folder_path = os.path.join(TRAINING_DATA_PATH, "windows")
     while True:
         new_job = await job_queue.get()  ## TODO: should the metadata being used?
-
+        logger.info("kick off a model training job...")
         res_s3_setup = s3_setup(s3_client)
         model_trained_success = train_nulog_model(s3_client, windows_folder_path)
         await send_signal_to_nats(nw, model_trained_success)
