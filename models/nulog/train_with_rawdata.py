@@ -22,7 +22,7 @@ def load_text():
             except Exception as e:
                 logging.error(e)
 
-    # texts = texts * 20
+    texts = texts * 20
     return texts
 
 
