@@ -92,7 +92,7 @@ async def consume_logs(logs_queue):
     """
     if IS_CONTROL_PLANE_SERVICE:
         await nw.subscribe(
-            nats_subject="preprocessed_logs_control_plane",
+            nats_subject="nulog_cp_logs",
             payload_queue=logs_queue,
             nats_queue="workers",
         )
