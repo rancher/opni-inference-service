@@ -4,6 +4,7 @@ import gc
 import json
 import logging
 import os
+import sys
 import time
 import urllib.request
 import zipfile
@@ -322,48 +323,14 @@ async def init_nats():
 
 
 async def get_pretrain_model():
-    url = "https://opni-public.s3.us-east-2.amazonaws.com/pretrain-models/version.txt"
-    try:
-        latest_version = urllib.request.urlopen(url).read().decode("utf-8")
-    except Exception as e:
-        logger.error(e)
-        logger.error("can't locate the version info from opni-public bucket")
-        return False
-
-    try:
-        with open("version.txt") as fin:
-            local_version = fin.read()
-    except Exception as e:
-        logger.warning(e)
-        local_version = "None"
-    logger.info(
-        f"latest model version: {latest_version}; local model version: {local_version}"
-    )
-
-    if latest_version != local_version:
-        urllib.request.urlretrieve(url, "version.txt")
-        model_zip_file = f"control-plane-model-{latest_version}.zip"
-        urllib.request.urlretrieve(
-            f"https://opni-public.s3.us-east-2.amazonaws.com/pretrain-models/{model_zip_file}",
-            model_zip_file,
-        )
+    filenames = next(os.walk("/model/"), (None, None, []))[2]
+    if len(filenames) == 1:
+        model_zip_file = f"/model/{filenames[0]}"
         with zipfile.ZipFile(model_zip_file, "r") as zip_ref:
             zip_ref.extractall("./")
-        logger.info("update to latest model")
         return True
-    else:
-        logger.info("model already up to date")
-        return False
-
-
-async def schedule_update_pretrain_model(logs_queue):
-    while True:
-        await asyncio.sleep(86400)  # try to update after 24 hours
-        update_status = await get_pretrain_model()
-        if update_status:
-            logs_queue.put(
-                json.dumps({"bucket": S3_BUCKET})
-            )  # send a signal to reload model
+    logger.error("did not find exactly 1 model") 
+    return False
 
 
 if __name__ == "__main__":
@@ -377,16 +344,18 @@ if __name__ == "__main__":
 
     if IS_CONTROL_PLANE_SERVICE:
         init_model_task = loop.create_task(get_pretrain_model())
-        loop.run_until_complete(init_model_task)
+        model_loaded = loop.run_until_complete(init_model_task)
+        if not model_loaded:
+            sys.exit(1)
 
     if IS_CONTROL_PLANE_SERVICE:
         loop.run_until_complete(
             asyncio.gather(
                 inference_coroutine,
                 consumer_coroutine,
-                schedule_update_pretrain_model(logs_queue),
             )
         )
+
     elif IS_GPU_SERVICE:
         job_queue = asyncio.Queue(loop=loop)
         signal_coroutine = consume_signal(job_queue, nw)
