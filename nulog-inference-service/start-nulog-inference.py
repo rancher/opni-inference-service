@@ -370,7 +370,13 @@ if __name__ == "__main__":
             sys.exit(1)
 
     if IS_CONTROL_PLANE_SERVICE:
-        loop.run_until_complete(asyncio.gather(inference_coroutine, consumer_coroutine))
+        loop.run_until_complete(
+            asyncio.gather(
+                inference_coroutine,
+                consumer_coroutine,
+            )
+        )
+
     elif IS_GPU_SERVICE:
         job_queue = asyncio.Queue(loop=loop)
         signal_coroutine = consume_signal(job_queue, nw)
