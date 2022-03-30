@@ -4,8 +4,8 @@ import gc
 import json
 import logging
 import os
+import sys
 import time
-import urllib.request
 import zipfile
 from collections import defaultdict
 
@@ -68,6 +68,7 @@ es = AsyncElasticsearch(
     verify_certs=False,
     use_ssl=True,
 )
+
 s3_client = boto3.resource(
     "s3",
     endpoint_url=S3_ENDPOINT,
@@ -117,32 +118,55 @@ async def update_preds_to_es(df):
     async def doc_generator(df):
         for index, document in df.iterrows():
             doc_dict = document.to_dict()
+            if "anomaly_level" in doc_dict:
+                doc_dict["doc"] = dict()
+                doc_dict["doc"]["anomaly_level"] = doc_dict["anomaly_level"]
+                del doc_dict["anomaly_level"]
             yield doc_dict
 
     df["predictions"] = [1 if p < THRESHOLD else 0 for p in df["nulog_confidence"]]
     df["_op_type"] = "update"
     df["_index"] = "logs"
     df.rename(columns={"log_id": "_id"}, inplace=True)
-    df["script"] = [
-        {
-            "source": (script_for_anomaly + script_source)
-            if nulog_score < THRESHOLD
-            else script_source,
-            "lang": "painless",
-            "params": {"nulog_score": nulog_score},
-        }
-        for nulog_score in df["nulog_confidence"]
-    ]
-    try:
-        await async_bulk(es, doc_generator(df[["_id", "_op_type", "_index", "script"]]))
-        logger.info(
-            "Updated {} anomalies from {} logs to ES".format(
-                len(df[df["predictions"] > 0]),
-                len(df["predictions"]),
+    if IS_CONTROL_PLANE_SERVICE:
+        df["anomaly_level"] = [
+            "Anomaly" if p < THRESHOLD else "Normal" for p in df["nulog_confidence"]
+        ]
+        try:
+            await async_bulk(
+                es, doc_generator(df[["_id", "_op_type", "_index", "anomaly_level"]])
             )
-        )
-    except Exception as e:
-        logger.error(e)
+            logger.info(
+                "Updated {} anomalies from {} logs to ES".format(
+                    len(df[df["anomaly_level"] == "Anomaly"]),
+                    len(df["anomaly_level"]),
+                )
+            )
+        except Exception as e:
+            logger.error(e)
+    else:
+        df["script"] = [
+            {
+                "source": (script_for_anomaly + script_source)
+                if nulog_score < THRESHOLD
+                else script_source,
+                "lang": "painless",
+                "params": {"nulog_score": nulog_score},
+            }
+            for nulog_score in df["nulog_confidence"]
+        ]
+        try:
+            await async_bulk(
+                es, doc_generator(df[["_id", "_op_type", "_index", "script"]])
+            )
+            logger.info(
+                "Updated {} anomalies from {} logs to ES".format(
+                    len(df[df["predictions"] > 0]),
+                    len(df["predictions"]),
+                )
+            )
+        except Exception as e:
+            logger.error(e)
 
 
 def s3_setup(s3_client):
@@ -233,11 +257,8 @@ async def infer_logs(logs_queue):
         decoded_payload = json.loads(payload)
         if "bucket" in decoded_payload and decoded_payload["bucket"] == S3_BUCKET:
             # signal to reload model
-            if IS_CONTROL_PLANE_SERVICE:
-                nulog_predictor.load(save_path="control-plane-output/")
-            else:
-                nulog_predictor.download_from_s3(decoded_payload)
-                nulog_predictor.load()
+            nulog_predictor.download_from_s3(decoded_payload)
+            nulog_predictor.load()
             reset_cached_preds(saved_preds)
             continue
 
@@ -322,48 +343,15 @@ async def init_nats():
 
 
 async def get_pretrain_model():
-    url = "https://opni-public.s3.us-east-2.amazonaws.com/pretrain-models/version.txt"
-    try:
-        latest_version = urllib.request.urlopen(url).read().decode("utf-8")
-    except Exception as e:
-        logger.error(e)
-        logger.error("can't locate the version info from opni-public bucket")
-        return False
-
-    try:
-        with open("version.txt") as fin:
-            local_version = fin.read()
-    except Exception as e:
-        logger.warning(e)
-        local_version = "None"
-    logger.info(
-        f"latest model version: {latest_version}; local model version: {local_version}"
-    )
-
-    if latest_version != local_version:
-        urllib.request.urlretrieve(url, "version.txt")
-        model_zip_file = f"control-plane-model-{latest_version}.zip"
-        urllib.request.urlretrieve(
-            f"https://opni-public.s3.us-east-2.amazonaws.com/pretrain-models/{model_zip_file}",
-            model_zip_file,
-        )
+    filenames = next(os.walk("/model/"), (None, None, []))[2]
+    if len(filenames) == 1:
+        model_zip_file = f"/model/{filenames[0]}"
         with zipfile.ZipFile(model_zip_file, "r") as zip_ref:
             zip_ref.extractall("./")
-        logger.info("update to latest model")
+            logger.info("Extracted model from zipfile.")
         return True
-    else:
-        logger.info("model already up to date")
-        return False
-
-
-async def schedule_update_pretrain_model(logs_queue):
-    while True:
-        await asyncio.sleep(86400)  # try to update after 24 hours
-        update_status = await get_pretrain_model()
-        if update_status:
-            logs_queue.put(
-                json.dumps({"bucket": S3_BUCKET})
-            )  # send a signal to reload model
+    logger.error("did not find exactly 1 model")
+    return False
 
 
 if __name__ == "__main__":
@@ -377,16 +365,12 @@ if __name__ == "__main__":
 
     if IS_CONTROL_PLANE_SERVICE:
         init_model_task = loop.create_task(get_pretrain_model())
-        loop.run_until_complete(init_model_task)
+        model_loaded = loop.run_until_complete(init_model_task)
+        if not model_loaded:
+            sys.exit(1)
 
     if IS_CONTROL_PLANE_SERVICE:
-        loop.run_until_complete(
-            asyncio.gather(
-                inference_coroutine,
-                consumer_coroutine,
-                schedule_update_pretrain_model(logs_queue),
-            )
-        )
+        loop.run_until_complete(asyncio.gather(inference_coroutine, consumer_coroutine))
     elif IS_GPU_SERVICE:
         job_queue = asyncio.Queue(loop=loop)
         signal_coroutine = consume_signal(job_queue, nw)
