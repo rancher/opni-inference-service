@@ -1,6 +1,7 @@
 FROM rancher/opni-python-base:3.8-torch
 
-RUN zypper --non-interactive in wget && \
+RUN zypper -n ref  && \
+    zypper --non-interactive in wget && \
     zypper --non-interactive in zip
 
 COPY ./nulog-inference-service/ /app/
