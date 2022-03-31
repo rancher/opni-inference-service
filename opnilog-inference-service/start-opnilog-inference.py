@@ -19,9 +19,9 @@ from elasticsearch import AsyncElasticsearch
 from elasticsearch.helpers import async_bulk
 from HyperParamaters import HyperParameters
 from nats.aio.errors import ErrTimeout
-from NulogServer import NulogServer
-from NulogTrain import consume_signal, train_model
 from opni_nats import NatsWrapper
+from OpniLogServer import OpniLogServer
+from OpniLogTrain import consume_signal, train_model
 
 LOGGING_LEVEL = os.getenv("LOGGING_LEVEL", "INFO")
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
@@ -148,12 +148,12 @@ async def update_preds_to_es(df):
         df["script"] = [
             {
                 "source": (script_for_anomaly + script_source)
-                if nulog_score < THRESHOLD
+                if opnilog_score < THRESHOLD
                 else script_source,
                 "lang": "painless",
-                "params": {"nulog_score": nulog_score},
+                "params": {"nulog_score": opnilog_score},
             }
-            for nulog_score in df["nulog_confidence"]
+            for opnilog_score in df["nulog_confidence"]
         ]
         try:
             await async_bulk(
@@ -240,12 +240,12 @@ async def infer_logs(logs_queue):
     s3_setup(s3_client)
     saved_preds = defaultdict(float)
     load_cached_preds(saved_preds)
-    nulog_predictor = NulogServer(MIN_LOG_TOKENS)
+    opnilog_predictor = OpniLogServer(MIN_LOG_TOKENS)
     if IS_CONTROL_PLANE_SERVICE:
-        nulog_predictor.load(save_path="control-plane-output/")
+        opnilog_predictor.load(save_path="control-plane-output/")
     else:
-        nulog_predictor.download_from_s3()
-        nulog_predictor.load()
+        opnilog_predictor.download_from_s3()
+        opnilog_predictor.load()
 
     max_payload_size = 128 if IS_CONTROL_PLANE_SERVICE else 512
     while True:
@@ -257,8 +257,8 @@ async def infer_logs(logs_queue):
         decoded_payload = json.loads(payload)
         if "bucket" in decoded_payload and decoded_payload["bucket"] == S3_BUCKET:
             # signal to reload model
-            nulog_predictor.download_from_s3(decoded_payload)
-            nulog_predictor.load()
+            opnilog_predictor.download_from_s3(decoded_payload)
+            opnilog_predictor.load()
             reset_cached_preds(saved_preds)
             continue
 
@@ -311,7 +311,7 @@ async def infer_logs(logs_queue):
                         logger.info(
                             f" {len(unique_masked_logs)} unique logs to inference."
                         )
-                        pred_scores_dict = nulog_predictor.predict(unique_masked_logs)
+                        pred_scores_dict = opnilog_predictor.predict(unique_masked_logs)
 
                         if pred_scores_dict is None:
                             logger.warning("fail to make predictions.")

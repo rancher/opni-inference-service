@@ -2,7 +2,7 @@
 import logging
 
 # Third Party
-from NuLogParser import LogParser
+from OpniLogParser import LogParser
 
 
 def init_model(save_path="output/"):

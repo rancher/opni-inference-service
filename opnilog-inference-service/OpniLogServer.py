@@ -5,9 +5,9 @@ from typing import List
 
 # Third Party
 import boto3
-import inference as nuloginf
+import inference as opniloginf
 from botocore.config import Config
-from NuLogParser import using_GPU
+from OpniLogParser import using_GPU
 
 LOGGING_LEVEL = os.getenv("LOGGING_LEVEL", "INFO")
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
@@ -27,7 +27,7 @@ DEFAULT_MODELREADY_PAYLOAD = {
 }
 
 
-class NulogServer:
+class OpniLogServer:
     def __init__(self, min_log_tokens):
         self.is_ready = False
         self.parser = None
@@ -66,21 +66,21 @@ class NulogServer:
         else:
             logger.debug("inferencing without GPU.")
         try:
-            self.parser = nuloginf.init_model(save_path=save_path)
+            self.parser = opniloginf.init_model(save_path=save_path)
             self.is_ready = True
-            logger.info("Nulog model gets loaded.")
+            logger.info("OpniLog model gets loaded.")
         except Exception as e:
-            logger.error(f"No Nulog model currently {e}")
+            logger.error(f"No OpniLog model currently {e}")
 
     def predict(self, logs: List[str]):
         """
         logs: masked logs
         """
         if not self.is_ready:
-            logger.warning("Warning: NuLog model is not ready yet!")
+            logger.warning("Warning: OpniLog model is not ready yet!")
             return None
 
-        # output = nuloginf.predict(self.parser, logs)
+        # output = opniloginf.predict(self.parser, logs)
         output = []
         for log in logs:
             tokens = self.parser.tokenize_data([log], isTrain=False)

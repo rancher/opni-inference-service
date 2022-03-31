@@ -6,8 +6,8 @@ import time
 # Third Party
 import torch
 import torch.nn as nn
-from NuLogModel import *  # should improve this
-from NuLogTokenizer import LogTokenizer
+from OpniLogModel import *  # should improve this
+from OpniLogTokenizer import LogTokenizer
 from torchvision import transforms
 
 # constant
@@ -141,7 +141,6 @@ class LogParser:
             )
 
         self.save_model(model=model, model_opt=model_opt, epoch=self.nr_epochs, loss=0)
-        # torch.save(model.state_dict(), "nulog_model_latest.pt")
 
     def init_inference(
         self,
