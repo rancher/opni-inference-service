@@ -35,7 +35,7 @@ class RegexMasker:
 
         # If log is a control plane log, mask out content from structured control plane log messages which follow the 'a="somecontent" to be a=<a>'
         if is_control_plane_log:
-            assignment_regex = '([a-zA-Z]+)="(.*?)"'
+            assignment_regex = '([A-z]+)="(.*?)"'
             matching_indices = [
                 (m.start(0), m.end(0)) for m in re.finditer(assignment_regex, content)
             ]
