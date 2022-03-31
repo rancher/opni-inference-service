@@ -6,7 +6,6 @@ import logging
 import os
 import sys
 import time
-import urllib.request
 import zipfile
 from collections import defaultdict
 
@@ -69,6 +68,7 @@ es = AsyncElasticsearch(
     verify_certs=False,
     use_ssl=True,
 )
+
 s3_client = boto3.resource(
     "s3",
     endpoint_url=S3_ENDPOINT,
@@ -93,7 +93,7 @@ async def consume_logs(logs_queue):
     """
     if IS_CONTROL_PLANE_SERVICE:
         await nw.subscribe(
-            nats_subject="preprocessed_logs_control_plane",
+            nats_subject="nulog_cp_logs",
             payload_queue=logs_queue,
             nats_queue="workers",
         )
@@ -118,32 +118,55 @@ async def update_preds_to_es(df):
     async def doc_generator(df):
         for index, document in df.iterrows():
             doc_dict = document.to_dict()
+            if "anomaly_level" in doc_dict:
+                doc_dict["doc"] = dict()
+                doc_dict["doc"]["anomaly_level"] = doc_dict["anomaly_level"]
+                del doc_dict["anomaly_level"]
             yield doc_dict
 
     df["predictions"] = [1 if p < THRESHOLD else 0 for p in df["nulog_confidence"]]
     df["_op_type"] = "update"
     df["_index"] = "logs"
     df.rename(columns={"log_id": "_id"}, inplace=True)
-    df["script"] = [
-        {
-            "source": (script_for_anomaly + script_source)
-            if nulog_score < THRESHOLD
-            else script_source,
-            "lang": "painless",
-            "params": {"nulog_score": nulog_score},
-        }
-        for nulog_score in df["nulog_confidence"]
-    ]
-    try:
-        await async_bulk(es, doc_generator(df[["_id", "_op_type", "_index", "script"]]))
-        logger.info(
-            "Updated {} anomalies from {} logs to ES".format(
-                len(df[df["predictions"] > 0]),
-                len(df["predictions"]),
+    if IS_CONTROL_PLANE_SERVICE:
+        df["anomaly_level"] = [
+            "Anomaly" if p < THRESHOLD else "Normal" for p in df["nulog_confidence"]
+        ]
+        try:
+            await async_bulk(
+                es, doc_generator(df[["_id", "_op_type", "_index", "anomaly_level"]])
             )
-        )
-    except Exception as e:
-        logger.error(e)
+            logger.info(
+                "Updated {} anomalies from {} logs to ES".format(
+                    len(df[df["anomaly_level"] == "Anomaly"]),
+                    len(df["anomaly_level"]),
+                )
+            )
+        except Exception as e:
+            logger.error(e)
+    else:
+        df["script"] = [
+            {
+                "source": (script_for_anomaly + script_source)
+                if nulog_score < THRESHOLD
+                else script_source,
+                "lang": "painless",
+                "params": {"nulog_score": nulog_score},
+            }
+            for nulog_score in df["nulog_confidence"]
+        ]
+        try:
+            await async_bulk(
+                es, doc_generator(df[["_id", "_op_type", "_index", "script"]])
+            )
+            logger.info(
+                "Updated {} anomalies from {} logs to ES".format(
+                    len(df[df["predictions"] > 0]),
+                    len(df["predictions"]),
+                )
+            )
+        except Exception as e:
+            logger.error(e)
 
 
 def s3_setup(s3_client):
@@ -234,11 +257,8 @@ async def infer_logs(logs_queue):
         decoded_payload = json.loads(payload)
         if "bucket" in decoded_payload and decoded_payload["bucket"] == S3_BUCKET:
             # signal to reload model
-            if IS_CONTROL_PLANE_SERVICE:
-                nulog_predictor.load(save_path="control-plane-output/")
-            else:
-                nulog_predictor.download_from_s3(decoded_payload)
-                nulog_predictor.load()
+            nulog_predictor.download_from_s3(decoded_payload)
+            nulog_predictor.load()
             reset_cached_preds(saved_preds)
             continue
 
@@ -328,8 +348,9 @@ async def get_pretrain_model():
         model_zip_file = f"/model/{filenames[0]}"
         with zipfile.ZipFile(model_zip_file, "r") as zip_ref:
             zip_ref.extractall("./")
+            logger.info("Extracted model from zipfile.")
         return True
-    logger.error("did not find exactly 1 model") 
+    logger.error("did not find exactly 1 model")
     return False
 
 
