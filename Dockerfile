@@ -10,4 +10,4 @@ COPY ./models/opnilog/ /app/
 RUN chmod a+rwx -R /app
 WORKDIR /app
 
-CMD [ "python", "start-opnilog-inference.py" ]
+CMD [ "python", "start_opnilog_inference.py" ]

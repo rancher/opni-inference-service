@@ -9,19 +9,20 @@ import shutil
 import boto3
 import botocore
 from botocore.client import Config
+from const import (
+    DEFAULT_MODEL_NAME,
+    LOGGING_LEVEL,
+    S3_ACCESS_KEY,
+    S3_BUCKET,
+    S3_SECRET_KEY,
+    TRAINING_DATA_PATH,
+)
 from opni_nats import NatsWrapper
-from OpniLogParser import LogParser
+from opnilog_parser import LogParser
 
-LOGGING_LEVEL = os.getenv("LOGGING_LEVEL", "INFO")
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__file__)
 logger.setLevel(LOGGING_LEVEL)
-
-S3_ENDPOINT = os.environ["S3_ENDPOINT"]
-S3_ACCESS_KEY = os.environ["S3_ACCESS_KEY"]
-S3_SECRET_KEY = os.environ["S3_SECRET_KEY"]
-S3_BUCKET = os.getenv("S3_BUCKET", "opni-nulog-models")
-TRAINING_DATA_PATH = os.getenv("TRAINING_DATA_PATH", "/var/opni-data")
 
 
 def train_opnilog_model(s3_client, windows_folder_path):
@@ -46,10 +47,10 @@ def train_opnilog_model(s3_client, windows_folder_path):
             parser.tokenizer.save_vocab()
             parser.train(tokenized, nr_epochs=nr_epochs, num_samples=num_samples)
             all_files = os.listdir("output/")
-            if "nulog_model_latest.pt" in all_files and "vocab.txt" in all_files:
+            if DEFAULT_MODEL_NAME in all_files and "vocab.txt" in all_files:
                 logger.debug("Completed training model")
                 s3_client.meta.client.upload_file(
-                    "output/nulog_model_latest.pt", S3_BUCKET, "nulog_model_latest.pt"
+                    "output/" + DEFAULT_MODEL_NAME, S3_BUCKET, DEFAULT_MODEL_NAME
                 )
                 s3_client.meta.client.upload_file(
                     "output/vocab.txt", S3_BUCKET, "vocab.txt"
@@ -99,7 +100,7 @@ async def send_signal_to_nats(nw, training_success):
         opnilog_payload = {
             "bucket": S3_BUCKET,
             "bucket_files": {
-                "model_file": "nulog_model_latest.pt",
+                "model_file": DEFAULT_MODEL_NAME,
                 "vocab_file": "vocab.txt",
             },
         }

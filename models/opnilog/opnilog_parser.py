@@ -6,8 +6,8 @@ import time
 # Third Party
 import torch
 import torch.nn as nn
-from OpniLogModel import *  # should improve this
-from OpniLogTokenizer import LogTokenizer
+from opnilog_model import *  # should improve this
+from opnilog_tokenizer import LogTokenizer
 from torchvision import transforms
 
 # constant

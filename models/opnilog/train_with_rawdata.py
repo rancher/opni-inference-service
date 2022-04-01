@@ -4,7 +4,7 @@ import logging
 
 # Third Party
 from masker import LogMasker
-from OpniLogParser import LogParser
+from opnilog_parser import LogParser
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(message)s")
 
