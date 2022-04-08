@@ -1,8 +1,12 @@
+# Standard Library
+import logging
+
 # Third Party
 import boto3
 from botocore.config import Config
 from const import (
     CACHED_PREDS_SAVEFILE,
+    LOGGING_LEVEL,
     S3_ACCESS_KEY,
     S3_BUCKET,
     S3_ENDPOINT,
@@ -18,8 +22,12 @@ s3_client = boto3.resource(
     config=Config(signature_version="s3v4"),
 )
 
+logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__file__)
+logger.setLevel(LOGGING_LEVEL)
 
-def s3_setup(s3_client):
+
+def s3_setup():
     # Function to set up a S3 bucket if it does not already exist.
     try:
         s3_client.meta.client.head_bucket(Bucket=S3_BUCKET)

@@ -9,6 +9,7 @@ import inference as opniloginf
 from botocore.config import Config
 from const import (
     DEFAULT_MODELREADY_PAYLOAD,
+    LOGGING_LEVEL,
     MIN_LOG_TOKENS,
     S3_ACCESS_KEY,
     S3_ENDPOINT,

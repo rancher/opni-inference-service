@@ -18,6 +18,7 @@ from const import (
     ES_USERNAME,
     IS_CONTROL_PLANE_SERVICE,
     IS_GPU_SERVICE,
+    LOGGING_LEVEL,
     S3_BUCKET,
     THRESHOLD,
 )
@@ -144,7 +145,7 @@ async def infer_logs(logs_queue):
     """
     coroutine to get payload from logs_queue, call inference rest API and put predictions to elasticsearch.
     """
-    s3_setup(s3_client)
+    s3_setup()
     saved_preds = defaultdict(float)
     load_cached_preds(saved_preds)
     opnilog_predictor = OpniLogPredictor()

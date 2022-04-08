@@ -67,10 +67,10 @@ class HyperParameters:
 
 
 params = HyperParameters()
-THRESHOLD = float(os.getenv("MODEL_THRESHOLD"), params.MODEL_THRESHOLD)
-MIN_LOG_TOKENS = int(os.getenv("MIN_LOG_TOKENS"), params.MIN_LOG_TOKENS)
+THRESHOLD = float(os.getenv("MODEL_THRESHOLD", params.MODEL_THRESHOLD))
+MIN_LOG_TOKENS = int(os.getenv("MIN_LOG_TOKENS", params.MIN_LOG_TOKENS))
 IS_CONTROL_PLANE_SERVICE = bool(
-    os.getenv("IS_CONTROL_PLANE_SERVICE"), params.IS_CONTROL_PLANE
+    os.getenv("IS_CONTROL_PLANE_SERVICE", params.IS_CONTROL_PLANE)
 )
 IS_GPU_SERVICE = bool(os.getenv("IS_GPU_SERVICE", False))
 
