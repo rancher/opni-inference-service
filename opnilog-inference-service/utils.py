@@ -4,6 +4,7 @@ import logging
 # Third Party
 import boto3
 from botocore.config import Config
+from botocore.exceptions import ClientError
 from const import (
     CACHED_PREDS_SAVEFILE,
     LOGGING_LEVEL,
