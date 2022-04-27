@@ -170,7 +170,7 @@ async def infer_logs(logs_queue):
             reset_cached_preds(saved_preds)
             continue
 
-        df_payload = pd.read_json(payload, dtype={"_id": object})
+        df_payload = pd.read_json(payload, dtype={"_id": object, "cluster_id": str})
         if (
             "gpu_service_result" in df_payload.columns
         ):  ## memorize predictions from GPU services.
