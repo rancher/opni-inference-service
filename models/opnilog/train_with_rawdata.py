@@ -4,7 +4,7 @@ import logging
 
 # Third Party
 from masker import LogMasker
-from NuLogParser import LogParser
+from opnilog_parser import LogParser
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(message)s")
 
@@ -26,7 +26,7 @@ def load_text():
     return texts
 
 
-def train_nulog_model():
+def train_opnilog_model():
     nr_epochs = 3
     num_samples = 0
     parser = LogParser()
@@ -38,4 +38,4 @@ def train_nulog_model():
 
 
 if __name__ == "__main__":
-    train_nulog_model()
+    train_opnilog_model()

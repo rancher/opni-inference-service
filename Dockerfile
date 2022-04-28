@@ -4,10 +4,10 @@ RUN zypper -n ref  && \
     zypper --non-interactive in wget && \
     zypper --non-interactive in zip
 
-COPY ./nulog-inference-service/ /app/
-COPY ./models/nulog/ /app/
+COPY ./opnilog-inference-service/ /app/
+COPY ./models/opnilog/ /app/
 
 RUN chmod a+rwx -R /app
 WORKDIR /app
 
-CMD [ "python", "start-nulog-inference.py" ]
+CMD [ "python", "start_opnilog_inference.py" ]

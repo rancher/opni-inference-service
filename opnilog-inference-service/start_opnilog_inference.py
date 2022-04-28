@@ -10,54 +10,29 @@ import zipfile
 from collections import defaultdict
 
 # Third Party
-import boto3
 import numpy as np
 import pandas as pd
-from botocore.config import Config
-from botocore.exceptions import ClientError
+from const import (
+    ES_ENDPOINT,
+    ES_PASSWORD,
+    ES_USERNAME,
+    IS_CONTROL_PLANE_SERVICE,
+    IS_GPU_SERVICE,
+    LOGGING_LEVEL,
+    S3_BUCKET,
+    THRESHOLD,
+)
 from elasticsearch import AsyncElasticsearch
 from elasticsearch.helpers import async_bulk
-from HyperParamaters import HyperParameters
 from nats.aio.errors import ErrTimeout
-from NulogServer import NulogServer
-from NulogTrain import consume_signal, train_model
 from opni_nats import NatsWrapper
+from opnilog_predictor import OpniLogPredictor
+from opnilog_trainer import consume_signal, train_model
+from utils import load_cached_preds, reset_cached_preds, s3_setup, save_cached_preds
 
-LOGGING_LEVEL = os.getenv("LOGGING_LEVEL", "INFO")
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__file__)
 logger.setLevel(LOGGING_LEVEL)
-
-params = HyperParameters()
-THRESHOLD = params.MODEL_THRESHOLD
-if "MODEL_THRESHOLD" in os.environ:
-    THRESHOLD = float(os.environ["MODEL_THRESHOLD"])
-MIN_LOG_TOKENS = params.MIN_LOG_TOKENS
-if "MIN_LOG_TOKENS" in os.environ:
-    MIN_LOG_TOKENS = int(os.environ["MIN_LOG_TOKENS"])
-IS_CONTROL_PLANE_SERVICE = params.IS_CONTROL_PLANE
-if "IS_CONTROL_PLANE" in os.environ:
-    IS_CONTROL_PLANE_SERVICE = bool(os.environ["IS_CONTROL_PLANE_SERVICE"])
-ES_ENDPOINT = os.environ["ES_ENDPOINT"]
-ES_USERNAME = os.getenv("ES_USERNAME", "admin")
-ES_PASSWORD = os.getenv("ES_PASSWORD", "admin")
-S3_ENDPOINT = os.environ["S3_ENDPOINT"]
-S3_ACCESS_KEY = os.environ["S3_ACCESS_KEY"]
-S3_SECRET_KEY = os.environ["S3_SECRET_KEY"]
-S3_BUCKET = os.getenv("S3_BUCKET", "opni-nulog-models")
-IS_GPU_SERVICE = bool(os.getenv("IS_GPU_SERVICE", False))
-CACHED_PREDS_SAVEFILE = (
-    "control-plane-preds.txt"
-    if IS_CONTROL_PLANE_SERVICE
-    else "gpu-preds.txt"
-    if IS_GPU_SERVICE
-    else "cpu-preds.txt"
-)
-SAVE_FREQ = 25
-
-logger.debug(f"model threshold is {THRESHOLD}")
-logger.debug(f"min log tokens is is {MIN_LOG_TOKENS}")
-logger.info(f"is controlplane is  {IS_CONTROL_PLANE_SERVICE}")
 
 nw = NatsWrapper()
 es = AsyncElasticsearch(
@@ -69,21 +44,14 @@ es = AsyncElasticsearch(
     use_ssl=True,
 )
 
-s3_client = boto3.resource(
-    "s3",
-    endpoint_url=S3_ENDPOINT,
-    aws_access_key_id=S3_ACCESS_KEY,
-    aws_secret_access_key=S3_SECRET_KEY,
-    config=Config(signature_version="s3v4"),
-)
 
 if IS_CONTROL_PLANE_SERVICE:
     script_source = 'ctx._source.anomaly_level = ctx._source.anomaly_predicted_count != 0 ? "Anomaly" : "Normal";'
 else:
     script_source = 'ctx._source.anomaly_level = ctx._source.anomaly_predicted_count == 0 ? "Normal" : ctx._source.anomaly_predicted_count == 1 ? "Suspicious" : "Anomaly";'
-script_source += "ctx._source.nulog_confidence = params['nulog_score'];"
+script_source += "ctx._source.opnilog_confidence = params['opnilog_score'];"
 script_for_anomaly = (
-    "ctx._source.anomaly_predicted_count += 1; ctx._source.nulog_anomaly = true;"
+    "ctx._source.anomaly_predicted_count += 1; ctx._source.opnilog_anomaly = true;"
 )
 
 
@@ -93,7 +61,7 @@ async def consume_logs(logs_queue):
     """
     if IS_CONTROL_PLANE_SERVICE:
         await nw.subscribe(
-            nats_subject="nulog_cp_logs",
+            nats_subject="opnilog_cp_logs",
             payload_queue=logs_queue,
             nats_queue="workers",
         )
@@ -115,6 +83,10 @@ async def consume_logs(logs_queue):
 
 
 async def update_preds_to_es(df):
+    """
+    this function updates predictions and anomaly level to opensearch
+    """
+
     async def doc_generator(df):
         for index, document in df.iterrows():
             doc_dict = document.to_dict()
@@ -124,13 +96,13 @@ async def update_preds_to_es(df):
                 del doc_dict["anomaly_level"]
             yield doc_dict
 
-    df["predictions"] = [1 if p < THRESHOLD else 0 for p in df["nulog_confidence"]]
+    df["predictions"] = [1 if p < THRESHOLD else 0 for p in df["opnilog_confidence"]]
     df["_op_type"] = "update"
     df["_index"] = "logs"
     df.rename(columns={"log_id": "_id"}, inplace=True)
     if IS_CONTROL_PLANE_SERVICE:
         df["anomaly_level"] = [
-            "Anomaly" if p < THRESHOLD else "Normal" for p in df["nulog_confidence"]
+            "Anomaly" if p < THRESHOLD else "Normal" for p in df["opnilog_confidence"]
         ]
         try:
             await async_bulk(
@@ -148,12 +120,12 @@ async def update_preds_to_es(df):
         df["script"] = [
             {
                 "source": (script_for_anomaly + script_source)
-                if nulog_score < THRESHOLD
+                if opnilog_score < THRESHOLD
                 else script_source,
                 "lang": "painless",
-                "params": {"nulog_score": nulog_score},
+                "params": {"opnilog_score": opnilog_score},
             }
-            for nulog_score in df["nulog_confidence"]
+            for opnilog_score in df["opnilog_confidence"]
         ]
         try:
             await async_bulk(
@@ -169,83 +141,19 @@ async def update_preds_to_es(df):
             logger.error(e)
 
 
-def s3_setup(s3_client):
-    # Function to set up a S3 bucket if it does not already exist.
-    try:
-        s3_client.meta.client.head_bucket(Bucket=S3_BUCKET)
-        logger.debug(f"{S3_BUCKET} bucket exists")
-    except ClientError as e:
-        # If a client error is thrown, then check that it was a 404 error.
-        # If it was a 404 error, then the bucket does not exist.
-        error_code = e.response["Error"]["Code"]
-        if error_code == "404":
-            logger.warning(f"{S3_BUCKET} bucket does not exist so creating it now")
-            s3_client.create_bucket(Bucket=S3_BUCKET)
-    return True
-
-
-def load_cached_preds(saved_preds: dict):
-
-    bucket_name = S3_BUCKET
-    try:
-        s3_client.meta.client.download_file(
-            bucket_name, CACHED_PREDS_SAVEFILE, CACHED_PREDS_SAVEFILE
-        )
-        with open(CACHED_PREDS_SAVEFILE) as fin:
-            for line in fin:
-                ml, score = line.split("\t")
-                saved_preds[ml] = float(score)
-    except Exception as e:
-        logger.error("cached preds files do not exist.")
-    logger.debug(f"loaded from cached preds: {len(saved_preds)}")
-    return saved_preds
-
-
-def save_cached_preds(new_preds: dict, saved_preds: dict):
-    update_to_s3 = False
-    bucket_name = S3_BUCKET
-    with open(CACHED_PREDS_SAVEFILE, "a") as fout:
-        for ml in new_preds:
-            logger.debug("ml :" + str(ml))
-            saved_preds[ml] = new_preds[ml]
-            fout.write(ml + "\t" + str(new_preds[ml]) + "\n")
-            if len(saved_preds) % SAVE_FREQ == 0:
-                update_to_s3 = True
-    logger.debug(f"saved cached preds, current num of cache: {len(saved_preds)}")
-    if update_to_s3:
-        try:
-            s3_client.meta.client.upload_file(
-                CACHED_PREDS_SAVEFILE, bucket_name, CACHED_PREDS_SAVEFILE
-            )
-        except Exception as e:
-            logger.error("Failed to update predictions to s3.")
-
-
-def reset_cached_preds(saved_preds: dict):
-    bucket_name = S3_BUCKET
-    saved_preds.clear()
-    try:
-        os.remove(CACHED_PREDS_SAVEFILE)
-        s3_client.meta.client.delete_object(
-            Bucket=bucket_name, Key=CACHED_PREDS_SAVEFILE
-        )
-    except Exception as e:
-        logger.error("cached preds files failed to delete.")
-
-
 async def infer_logs(logs_queue):
     """
     coroutine to get payload from logs_queue, call inference rest API and put predictions to elasticsearch.
     """
-    s3_setup(s3_client)
+    s3_setup()
     saved_preds = defaultdict(float)
     load_cached_preds(saved_preds)
-    nulog_predictor = NulogServer(MIN_LOG_TOKENS)
+    opnilog_predictor = OpniLogPredictor()
     if IS_CONTROL_PLANE_SERVICE:
-        nulog_predictor.load(save_path="control-plane-output/")
+        opnilog_predictor.load(save_path="control-plane-output/")
     else:
-        nulog_predictor.download_from_s3()
-        nulog_predictor.load()
+        opnilog_predictor.download_from_s3()
+        opnilog_predictor.load()
 
     max_payload_size = 128 if IS_CONTROL_PLANE_SERVICE else 512
     while True:
@@ -257,8 +165,8 @@ async def infer_logs(logs_queue):
         decoded_payload = json.loads(payload)
         if "bucket" in decoded_payload and decoded_payload["bucket"] == S3_BUCKET:
             # signal to reload model
-            nulog_predictor.download_from_s3(decoded_payload)
-            nulog_predictor.load()
+            opnilog_predictor.download_from_s3(decoded_payload)
+            opnilog_predictor.load()
             reset_cached_preds(saved_preds)
             continue
 
@@ -268,7 +176,7 @@ async def infer_logs(logs_queue):
         ):  ## memorize predictions from GPU services.
             logger.info("saved predictions from GPU service.")
             save_cached_preds(
-                dict(zip(df_payload["masked_log"], df_payload["nulog_confidence"])),
+                dict(zip(df_payload["masked_log"], df_payload["opnilog_confidence"])),
                 saved_preds,
             )
 
@@ -280,7 +188,7 @@ async def infer_logs(logs_queue):
                 df_cached_logs, df_new_logs = df[is_log_cached], df[~is_log_cached]
 
                 if len(df_cached_logs) > 0:
-                    df_cached_logs["nulog_confidence"] = [
+                    df_cached_logs["opnilog_confidence"] = [
                         saved_preds[ml] for ml in df_cached_logs["masked_log"]
                     ]
                     await update_preds_to_es(df_cached_logs)
@@ -311,12 +219,12 @@ async def infer_logs(logs_queue):
                         logger.info(
                             f" {len(unique_masked_logs)} unique logs to inference."
                         )
-                        pred_scores_dict = nulog_predictor.predict(unique_masked_logs)
+                        pred_scores_dict = opnilog_predictor.predict(unique_masked_logs)
 
                         if pred_scores_dict is None:
                             logger.warning("fail to make predictions.")
                         else:
-                            df_new_logs["nulog_confidence"] = [
+                            df_new_logs["opnilog_confidence"] = [
                                 pred_scores_dict[ml] for ml in df_new_logs["masked_log"]
                             ]
                             save_cached_preds(pred_scores_dict, saved_preds)
@@ -389,7 +297,7 @@ if __name__ == "__main__":
                 training_coroutine,
             )
         )
-    else:  # CPU SERVICE
+    else:  # workload CPU SERVICE
         loop.run_until_complete(asyncio.gather(inference_coroutine, consumer_coroutine))
 
     try:

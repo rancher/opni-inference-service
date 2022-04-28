@@ -5,33 +5,27 @@ from typing import List
 
 # Third Party
 import boto3
-import inference as nuloginf
+import inference as opniloginf
 from botocore.config import Config
-from NuLogParser import using_GPU
+from const import (
+    DEFAULT_MODELREADY_PAYLOAD,
+    LOGGING_LEVEL,
+    MIN_LOG_TOKENS,
+    S3_ACCESS_KEY,
+    S3_ENDPOINT,
+    S3_SECRET_KEY,
+)
+from opnilog_parser import using_GPU
 
-LOGGING_LEVEL = os.getenv("LOGGING_LEVEL", "INFO")
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__file__)
 logger.setLevel(LOGGING_LEVEL)
 
-S3_ACCESS_KEY = os.environ["S3_ACCESS_KEY"]
-S3_SECRET_KEY = os.environ["S3_SECRET_KEY"]
-S3_ENDPOINT = os.environ["S3_ENDPOINT"]
-S3_BUCKET = os.getenv("S3_BUCKET", "opni-nulog-models")
-DEFAULT_MODELREADY_PAYLOAD = {
-    "bucket": S3_BUCKET,
-    "bucket_files": {
-        "model_file": "nulog_model_latest.pt",
-        "vocab_file": "vocab.txt",
-    },
-}
 
-
-class NulogServer:
-    def __init__(self, min_log_tokens):
+class OpniLogPredictor:
+    def __init__(self):
         self.is_ready = False
         self.parser = None
-        self.MIN_LOG_TOKENS = min_log_tokens
 
     def download_from_s3(
         self,
@@ -66,25 +60,24 @@ class NulogServer:
         else:
             logger.debug("inferencing without GPU.")
         try:
-            self.parser = nuloginf.init_model(save_path=save_path)
+            self.parser = opniloginf.init_model(save_path=save_path)
             self.is_ready = True
-            logger.info("Nulog model gets loaded.")
+            logger.info("OpniLog model gets loaded.")
         except Exception as e:
-            logger.error(f"No Nulog model currently {e}")
+            logger.error(f"No OpniLog model currently {e}")
 
     def predict(self, logs: List[str]):
         """
-        logs: masked logs
+        this methed defines the activity of model prediction for opnilog service
         """
         if not self.is_ready:
-            logger.warning("Warning: NuLog model is not ready yet!")
+            logger.warning("Warning: OpniLog model is not ready yet!")
             return None
 
-        # output = nuloginf.predict(self.parser, logs)
         output = []
         for log in logs:
             tokens = self.parser.tokenize_data([log], isTrain=False)
-            if len(tokens[0]) < self.MIN_LOG_TOKENS:
+            if len(tokens[0]) < MIN_LOG_TOKENS:
                 output.append(1)
             else:
                 pred = (self.parser.predict(tokens))[0]

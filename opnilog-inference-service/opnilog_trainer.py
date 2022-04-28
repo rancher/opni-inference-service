@@ -9,25 +9,26 @@ import shutil
 import boto3
 import botocore
 from botocore.client import Config
-from NuLogParser import LogParser
+from const import (
+    DEFAULT_MODEL_NAME,
+    LOGGING_LEVEL,
+    S3_ACCESS_KEY,
+    S3_BUCKET,
+    S3_SECRET_KEY,
+    TRAINING_DATA_PATH,
+)
 from opni_nats import NatsWrapper
+from opnilog_parser import LogParser
 
-LOGGING_LEVEL = os.getenv("LOGGING_LEVEL", "INFO")
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__file__)
 logger.setLevel(LOGGING_LEVEL)
 
-S3_ENDPOINT = os.environ["S3_ENDPOINT"]
-S3_ACCESS_KEY = os.environ["S3_ACCESS_KEY"]
-S3_SECRET_KEY = os.environ["S3_SECRET_KEY"]
-S3_BUCKET = os.getenv("S3_BUCKET", "opni-nulog-models")
-TRAINING_DATA_PATH = os.getenv("TRAINING_DATA_PATH", "/var/opni-data")
 
-
-def train_nulog_model(s3_client, windows_folder_path):
+def train_opnilog_model(s3_client, windows_folder_path):
     """
-    This function will be used to load the training data and then train the new Nulog model.
-    If during this process, there is any exception, it will return False indicating that a new Nulog model failed to
+    This function will be used to load the training data and then train the new OpniLog model.
+    If during this process, there is any exception, it will return False indicating that a new OpniLog model failed to
     train. Otherwise, it will return True.
     """
     nr_epochs = 3
@@ -46,27 +47,29 @@ def train_nulog_model(s3_client, windows_folder_path):
             parser.tokenizer.save_vocab()
             parser.train(tokenized, nr_epochs=nr_epochs, num_samples=num_samples)
             all_files = os.listdir("output/")
-            if "nulog_model_latest.pt" in all_files and "vocab.txt" in all_files:
+            if DEFAULT_MODEL_NAME in all_files and "vocab.txt" in all_files:
                 logger.debug("Completed training model")
                 s3_client.meta.client.upload_file(
-                    "output/nulog_model_latest.pt", S3_BUCKET, "nulog_model_latest.pt"
+                    "output/" + DEFAULT_MODEL_NAME, S3_BUCKET, DEFAULT_MODEL_NAME
                 )
                 s3_client.meta.client.upload_file(
                     "output/vocab.txt", S3_BUCKET, "vocab.txt"
                 )
-                logger.info("Nulog model and vocab have been uploaded to S3.")
+                logger.info("OpniLog model and vocab have been uploaded to S3.")
                 shutil.rmtree("output/")
                 return True
             else:
                 logger.error(
-                    "Nulog model was not able to be trained and saved successfully."
+                    "OpniLog model was not able to be trained and saved successfully."
                 )
                 return False
         except Exception as e:
-            logger.error("Nulog model was not able to be trained.")
+            logger.error("OpniLog model was not able to be trained.")
             return False
     else:
-        logger.error("Cannot train Nulog model as there was no training data present.")
+        logger.error(
+            "Cannot train OpniLog model as there was no training data present."
+        )
         return False
 
 
@@ -88,32 +91,32 @@ def s3_setup(s3_client):
 async def send_signal_to_nats(nw, training_success):
     # Function that will send signal to Nats subjects gpu_trainingjob_status and model_ready.
     await nw.connect()
-    # Regardless of a successful training of Nulog model, send JobEnd message to Nats subject gpu_trainingjob_status to make GPU available again.
+    # Regardless of a successful training of OpniLog model, send JobEnd message to Nats subject gpu_trainingjob_status to make GPU available again.
     await nw.publish("gpu_trainingjob_status", b"JobEnd")
 
-    # If Nulog model has been successfully trained, send payload to model_ready Nats subject that new model is ready to be uploaded from Minio.
+    # If OpniLog model has been successfully trained, send payload to model_ready Nats subject that new model is ready to be uploaded from Minio.
     logger.info(f"training status : {training_success}")
     if training_success:
-        nulog_payload = {
+        opnilog_payload = {
             "bucket": S3_BUCKET,
             "bucket_files": {
-                "model_file": "nulog_model_latest.pt",
+                "model_file": DEFAULT_MODEL_NAME,
                 "vocab_file": "vocab.txt",
             },
         }
         await nw.connect()
         await nw.publish(
-            nats_subject="model_ready", payload_df=json.dumps(nulog_payload).encode()
+            nats_subject="model_ready", payload_df=json.dumps(opnilog_payload).encode()
         )
         logger.info(
-            "Published to model_ready Nats subject that new Nulog model is ready to be used for inferencing."
+            "Published to model_ready Nats subject that new OpniLog model is ready to be used for inferencing."
         )
 
 
 async def consume_signal(job_queue, nw):
     """
     This function subscribes to the Nats subject gpu_service_training_internal which will receive payload when it is
-    time to train a new Nulog model.
+    time to train a new OpniLog model.
     """
     await nw.subscribe(
         nats_subject="gpu_service_training_internal", payload_queue=job_queue
@@ -123,7 +126,7 @@ async def consume_signal(job_queue, nw):
 async def train_model(job_queue, nw):
     """
     This function will monitor the jobs_queue to see if any new training signal has been received. If it receives the
-    signal, it will kick off a new training job and upon successful or failed training of a new Nulog model, call
+    signal, it will kick off a new training job and upon successful or failed training of a new OpniLog model, call
     the send_signal_to_nats method to send payload to the appropriate Nats subjects.
     """
     s3_client = boto3.resource(
@@ -138,7 +141,7 @@ async def train_model(job_queue, nw):
         new_job = await job_queue.get()  ## TODO: should the metadata being used?
         logger.info("kick off a model training job...")
         res_s3_setup = s3_setup(s3_client)
-        model_trained_success = train_nulog_model(s3_client, windows_folder_path)
+        model_trained_success = train_opnilog_model(s3_client, windows_folder_path)
         await send_signal_to_nats(nw, model_trained_success)
 
 
@@ -169,4 +172,4 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        logger.error(f"Nulog training failed. Exception {e}")
+        logger.error(f"OpniLog training failed. Exception {e}")
