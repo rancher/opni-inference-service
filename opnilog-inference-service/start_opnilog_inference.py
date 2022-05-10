@@ -16,10 +16,10 @@ from const import (
     ES_ENDPOINT,
     ES_PASSWORD,
     ES_USERNAME,
-    IS_CONTROL_PLANE_SERVICE,
     IS_GPU_SERVICE,
     LOGGING_LEVEL,
     S3_BUCKET,
+    SERVICE_TYPE,
     THRESHOLD,
 )
 from elasticsearch import AsyncElasticsearch
@@ -43,9 +43,10 @@ es = AsyncElasticsearch(
     verify_certs=False,
     use_ssl=True,
 )
+IS_CONTROL_PLANE_SERVICE = SERVICE_TYPE == "control-plane"
+IS_RANCHER_SERVICE = SERVICE_TYPE == "rancher"
 
-
-if IS_CONTROL_PLANE_SERVICE:
+if SERVICE_TYPE == "control-plane" or SERVICE_TYPE == "rancher":
     script_source = 'ctx._source.anomaly_level = ctx._source.anomaly_predicted_count != 0 ? "Anomaly" : "Normal";'
 else:
     script_source = 'ctx._source.anomaly_level = ctx._source.anomaly_predicted_count == 0 ? "Normal" : ctx._source.anomaly_predicted_count == 1 ? "Suspicious" : "Anomaly";'
@@ -62,6 +63,12 @@ async def consume_logs(logs_queue):
     if IS_CONTROL_PLANE_SERVICE:
         await nw.subscribe(
             nats_subject="opnilog_cp_logs",
+            payload_queue=logs_queue,
+            nats_queue="workers",
+        )
+    elif IS_RANCHER_SERVICE:
+        await nw.subscribe(
+            nats_subject="opnilog_rancher_logs",
             payload_queue=logs_queue,
             nats_queue="workers",
         )
@@ -100,7 +107,7 @@ async def update_preds_to_es(df):
     df["_op_type"] = "update"
     df["_index"] = "logs"
     df.rename(columns={"log_id": "_id"}, inplace=True)
-    if IS_CONTROL_PLANE_SERVICE:
+    if IS_CONTROL_PLANE_SERVICE or IS_RANCHER_SERVICE:
         df["anomaly_level"] = [
             "Anomaly" if p < THRESHOLD else "Normal" for p in df["opnilog_confidence"]
         ]
@@ -149,13 +156,13 @@ async def infer_logs(logs_queue):
     saved_preds = defaultdict(float)
     load_cached_preds(saved_preds)
     opnilog_predictor = OpniLogPredictor()
-    if IS_CONTROL_PLANE_SERVICE:
-        opnilog_predictor.load(save_path="control-plane-output/")
+    if IS_CONTROL_PLANE_SERVICE or IS_RANCHER_SERVICE:
+        opnilog_predictor.load(save_path="model-output/")
     else:
         opnilog_predictor.download_from_s3()
         opnilog_predictor.load()
 
-    max_payload_size = 128 if IS_CONTROL_PLANE_SERVICE else 512
+    max_payload_size = 128 if (IS_CONTROL_PLANE_SERVICE or IS_RANCHER_SERVICE) else 512
     while True:
         payload = await logs_queue.get()
         if payload is None:
@@ -201,7 +208,9 @@ async def infer_logs(logs_queue):
                         )
 
                 if len(df_new_logs) > 0:
-                    if not (IS_GPU_SERVICE or IS_CONTROL_PLANE_SERVICE):
+                    if not (
+                        IS_GPU_SERVICE or IS_CONTROL_PLANE_SERVICE or IS_RANCHER_SERVICE
+                    ):
                         try:  # try to post request to GPU service. response would be b"YES" if accepted, b"NO" for declined/timeout
                             response = await nw.request(
                                 "gpu_service_inference",
@@ -214,7 +223,12 @@ async def infer_logs(logs_queue):
                             response = "NO"
                         logger.info(f"{response} for GPU service")
 
-                    if IS_GPU_SERVICE or IS_CONTROL_PLANE_SERVICE or response == "NO":
+                    if (
+                        IS_GPU_SERVICE
+                        or IS_CONTROL_PLANE_SERVICE
+                        or IS_RANCHER_SERVICE
+                        or response == "NO"
+                    ):
                         unique_masked_logs = list(df_new_logs["masked_log"].unique())
                         logger.info(
                             f" {len(unique_masked_logs)} unique logs to inference."
@@ -271,13 +285,13 @@ if __name__ == "__main__":
     task = loop.create_task(init_nats())
     loop.run_until_complete(task)
 
-    if IS_CONTROL_PLANE_SERVICE:
+    if IS_CONTROL_PLANE_SERVICE or IS_RANCHER_SERVICE:
         init_model_task = loop.create_task(get_pretrain_model())
         model_loaded = loop.run_until_complete(init_model_task)
         if not model_loaded:
             sys.exit(1)
 
-    if IS_CONTROL_PLANE_SERVICE:
+    if IS_CONTROL_PLANE_SERVICE or IS_RANCHER_SERVICE:
         loop.run_until_complete(
             asyncio.gather(
                 inference_coroutine,
