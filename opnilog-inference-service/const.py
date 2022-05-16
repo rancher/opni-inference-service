@@ -76,6 +76,8 @@ IS_GPU_SERVICE = bool(os.getenv("IS_GPU_SERVICE", False))
 CACHED_PREDS_SAVEFILE = (
     "control-plane-preds.txt"
     if SERVICE_TYPE == "control-plane"
+    else "rancher-preds.txt"
+    if SERVICE_TYPE == "rancher"
     else "gpu-preds.txt"
     if IS_GPU_SERVICE
     else "cpu-preds.txt"
