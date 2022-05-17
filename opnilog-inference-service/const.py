@@ -38,7 +38,7 @@ class HyperParameters:
     def __init__(self):
         self._MODEL_THRESHOLD = float(0.7)
         self._MIN_LOG_TOKENS = int(1)
-        self._IS_CONTROL_PLANE = False
+        self._SERVICE_TYPE = "control-plane"
         if not (os.path.exists("/etc/opni/hyperparameters.json")):
             return
         f = open("/etc/opni/hyperparameters.json")
@@ -49,8 +49,8 @@ class HyperParameters:
             self._MODEL_THRESHOLD = float(data["modelThreshold"])
         if "minLogTokens" in data:
             self._MIN_LOG_TOKENS = int(data["minLogTokens"])
-        if "isControlPlane" in data:
-            self._IS_CONTROL_PLANE = data["isControlPlane"].lower() == "true"
+        if "serviceType" in data:
+            self._SERVICE_TYPE = data["serviceType"].lower()
         f.close()
 
     @property
@@ -62,22 +62,22 @@ class HyperParameters:
         return self._MIN_LOG_TOKENS
 
     @property
-    def IS_CONTROL_PLANE(self):
-        return self._IS_CONTROL_PLANE
+    def SERVICE_TYPE(self):
+        return self._SERVICE_TYPE
 
 
 params = HyperParameters()
 THRESHOLD = float(os.getenv("MODEL_THRESHOLD", params.MODEL_THRESHOLD))
 MIN_LOG_TOKENS = int(os.getenv("MIN_LOG_TOKENS", params.MIN_LOG_TOKENS))
-IS_CONTROL_PLANE_SERVICE = bool(
-    os.getenv("IS_CONTROL_PLANE_SERVICE", params.IS_CONTROL_PLANE)
-)
+SERVICE_TYPE = os.getenv("SERVICE_TYPE", params.SERVICE_TYPE)
 IS_GPU_SERVICE = bool(os.getenv("IS_GPU_SERVICE", False))
 
 ## these 2 const are specifically for caching predictions
 CACHED_PREDS_SAVEFILE = (
     "control-plane-preds.txt"
-    if IS_CONTROL_PLANE_SERVICE
+    if SERVICE_TYPE == "control-plane"
+    else "rancher-preds.txt"
+    if SERVICE_TYPE == "rancher"
     else "gpu-preds.txt"
     if IS_GPU_SERVICE
     else "cpu-preds.txt"
