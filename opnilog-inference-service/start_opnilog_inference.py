@@ -13,18 +13,7 @@ from io import StringIO
 # Third Party
 import numpy as np
 import pandas as pd
-from const import (
-    ES_ENDPOINT,
-    ES_PASSWORD,
-    ES_USERNAME,
-    IS_GPU_SERVICE,
-    LOGGING_LEVEL,
-    S3_BUCKET,
-    SERVICE_TYPE,
-    THRESHOLD,
-)
-from elasticsearch import AsyncElasticsearch
-from elasticsearch.helpers import async_bulk
+from const import IS_GPU_SERVICE, LOGGING_LEVEL, SERVICE_TYPE, THRESHOLD
 from nats.aio.errors import ErrTimeout
 from opni_nats import NatsWrapper
 from opnilog_predictor import OpniLogPredictor
@@ -36,25 +25,8 @@ logger = logging.getLogger(__file__)
 logger.setLevel(LOGGING_LEVEL)
 
 nw = NatsWrapper()
-es = AsyncElasticsearch(
-    [ES_ENDPOINT],
-    port=9200,
-    http_compress=True,
-    http_auth=(ES_USERNAME, ES_PASSWORD),
-    verify_certs=False,
-    use_ssl=True,
-)
 IS_CONTROL_PLANE_SERVICE = SERVICE_TYPE == "control-plane"
 IS_RANCHER_SERVICE = SERVICE_TYPE == "rancher"
-
-if SERVICE_TYPE == "control-plane" or SERVICE_TYPE == "rancher":
-    script_source = 'ctx._source.anomaly_level = ctx._source.anomaly_predicted_count != 0 ? "Anomaly" : "Normal";'
-else:
-    script_source = 'ctx._source.anomaly_level = ctx._source.anomaly_predicted_count == 0 ? "Normal" : ctx._source.anomaly_predicted_count == 1 ? "Suspicious" : "Anomaly";'
-script_source += "ctx._source.opnilog_confidence = params['opnilog_score'];"
-script_for_anomaly = (
-    "ctx._source.anomaly_predicted_count += 1; ctx._source.opnilog_anomaly = true;"
-)
 
 
 async def consume_logs(logs_queue):
@@ -90,65 +62,6 @@ async def consume_logs(logs_queue):
             )
 
 
-async def update_preds_to_es(df):
-    """
-    this function updates predictions and anomaly level to opensearch
-    """
-
-    async def doc_generator(df):
-        for index, document in df.iterrows():
-            doc_dict = document.to_dict()
-            if "anomaly_level" in doc_dict:
-                doc_dict["doc"] = dict()
-                doc_dict["doc"]["anomaly_level"] = doc_dict["anomaly_level"]
-                del doc_dict["anomaly_level"]
-            yield doc_dict
-
-    df["predictions"] = [1 if p < THRESHOLD else 0 for p in df["opnilog_confidence"]]
-    df["_op_type"] = "update"
-    df["_index"] = "logs"
-    df.rename(columns={"log_id": "_id"}, inplace=True)
-    if IS_CONTROL_PLANE_SERVICE or IS_RANCHER_SERVICE:
-        df["anomaly_level"] = [
-            "Anomaly" if p < THRESHOLD else "Normal" for p in df["opnilog_confidence"]
-        ]
-        try:
-            await async_bulk(
-                es, doc_generator(df[["_id", "_op_type", "_index", "anomaly_level"]])
-            )
-            logger.info(
-                "Updated {} anomalies from {} logs to ES".format(
-                    len(df[df["anomaly_level"] == "Anomaly"]),
-                    len(df["anomaly_level"]),
-                )
-            )
-        except Exception as e:
-            logger.error(e)
-    else:
-        df["script"] = [
-            {
-                "source": (script_for_anomaly + script_source)
-                if opnilog_score < THRESHOLD
-                else script_source,
-                "lang": "painless",
-                "params": {"opnilog_score": opnilog_score},
-            }
-            for opnilog_score in df["opnilog_confidence"]
-        ]
-        try:
-            await async_bulk(
-                es, doc_generator(df[["_id", "_op_type", "_index", "script"]])
-            )
-            logger.info(
-                "Updated {} anomalies from {} logs to ES".format(
-                    len(df[df["predictions"] > 0]),
-                    len(df["predictions"]),
-                )
-            )
-        except Exception as e:
-            logger.error(e)
-
-
 async def infer_logs(logs_queue):
     """
     coroutine to get payload from logs_queue, call inference rest API and put predictions to elasticsearch.
@@ -170,7 +83,8 @@ async def infer_logs(logs_queue):
         payload = await logs_queue.get()
         if payload is None:
             continue
-
+        logging.info("received payload")
+        logging.info(payload)
         decoded_payload = json.loads(payload)
         if len(decoded_payload) == 1:
             pending_list.append(decoded_payload[0])
@@ -203,6 +117,7 @@ async def run(df_payload, saved_preds, max_payload_size, opnilog_predictor):
             saved_preds,
         )
     else:
+        df_payload["inference_model"] = "opnilog"
         for i in range(0, len(df_payload), max_payload_size):
             df = df_payload[i : min(i + max_payload_size, len(df_payload))]
 
@@ -213,7 +128,11 @@ async def run(df_payload, saved_preds, max_payload_size, opnilog_predictor):
                 df_cached_logs["opnilog_confidence"] = [
                     saved_preds[ml] for ml in df_cached_logs["masked_log"]
                 ]
-                await update_preds_to_es(df_cached_logs)
+                df_cached_logs["anomaly_level"] = [
+                    "Anomaly" if p < THRESHOLD else "Normal"
+                    for p in df_cached_logs["opnilog_confidence"]
+                ]
+                await nw.publish("inferenced_logs", df_cached_logs.to_json().encode())
                 if IS_GPU_SERVICE:
                     logger.info("send cached results back.")
                     df_cached_logs["gpu_service_result"] = True
@@ -254,8 +173,14 @@ async def run(df_payload, saved_preds, max_payload_size, opnilog_predictor):
                         df_new_logs["opnilog_confidence"] = [
                             pred_scores_dict[ml] for ml in df_new_logs["masked_log"]
                         ]
+                        df_new_logs["anomaly_level"] = [
+                            "Anomaly" if p < THRESHOLD else "Normal"
+                            for p in df_new_logs["opnilog_confidence"]
+                        ]
                         save_cached_preds(pred_scores_dict, saved_preds)
-                        await update_preds_to_es(df_new_logs)
+                        await nw.publish(
+                            "inferenced_logs", df_new_logs.to_json().encode()
+                        )
                         if IS_GPU_SERVICE:
                             logger.info("send new results back.")
                             df_new_logs["gpu_service_result"] = True
