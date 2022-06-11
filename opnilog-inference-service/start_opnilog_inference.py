@@ -83,8 +83,6 @@ async def infer_logs(logs_queue):
         payload = await logs_queue.get()
         if payload is None:
             continue
-        logging.info("received payload")
-        logging.info(payload)
         decoded_payload = json.loads(payload)
         if len(decoded_payload) == 1:
             pending_list.append(decoded_payload[0])
