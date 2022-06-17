@@ -56,14 +56,14 @@ def save_cached_preds(new_preds: dict, saved_preds: dict):
             fout.write(ml + "\t" + str(new_preds[ml]) + "\n")
             if len(saved_preds) % SAVE_FREQ == 0:
                 update_to_s3 = True
-    logger.debug(f"saved cached preds, current num of cache: {len(saved_preds)}")
     if update_to_s3:
         try:
             s3_client.meta.client.upload_file(
                 CACHED_PREDS_SAVEFILE, bucket_name, CACHED_PREDS_SAVEFILE
             )
+            logger.info(f"saved cached preds, current num of cache: {len(saved_preds)}")
         except Exception as e:
-            logger.error("Failed to update predictions to s3.")
+            logger.error(f"Failed to update predictions to s3. {e}")
 
 
 def reset_cached_preds(saved_preds: dict):
