@@ -9,6 +9,7 @@ import zipfile
 from collections import defaultdict
 
 # Third Party
+import numpy as np
 import pandas as pd
 import payload_pb2
 from const import IS_GPU_SERVICE, LOGGING_LEVEL, SERVICE_TYPE, THRESHOLD
@@ -130,16 +131,39 @@ async def run(df_payload, saved_preds, max_payload_size, opnilog_predictor):
         start_time = time.time()
         df_payload["inferenceModel"] = "opnilog"
         for i in range(0, len(df_payload), max_payload_size):
-            df_batch = df_payload[i : min(i + max_payload_size, len(df_payload))]
+            df = df_payload[i : min(i + max_payload_size, len(df_payload))]
 
-            if len(df_batch) > 0:
+            is_log_cached = np.array([ml in saved_preds for ml in df["maskedLog"]])
+            df_cached_logs, df_new_logs = df[is_log_cached], df[~is_log_cached]
+
+            if len(df_cached_logs) > 0:
+                df_cached_logs["opnilogConfidence"] = [
+                    saved_preds[ml] for ml in df_cached_logs["maskedLog"]
+                ]
+                df_cached_logs["anomalyLevel"] = [
+                    "Anomaly" if p < THRESHOLD else "Normal"
+                    for p in df_cached_logs["opnilogConfidence"]
+                ]
+                df_cached_list = df_cached_logs.to_dict("records")
+                await nw.publish(
+                    "inferenced_logs", get_serialized_protobuf_object(df_cached_list)
+                )
+                if IS_GPU_SERVICE:
+                    logger.info("send cached results back.")
+                    df_cached_logs["gpu_service_result"] = True
+                    await nw.publish(
+                        nats_subject="gpu_service_predictions",
+                        payload_df=df_cached_logs.to_json().encode(),
+                    )
+
+            if len(df_new_logs) > 0:
                 if not (
                     IS_GPU_SERVICE or IS_CONTROL_PLANE_SERVICE or IS_RANCHER_SERVICE
                 ):
                     try:  # try to post request to GPU service. response would be b"YES" if accepted, b"NO" for declined/timeout
                         response = await nw.request(
                             "gpu_service_inference",
-                            df_batch.to_json().encode(),
+                            df_new_logs.to_json().encode(),
                             timeout=1,
                         )
                         response = response.data.decode()
@@ -154,31 +178,32 @@ async def run(df_payload, saved_preds, max_payload_size, opnilog_predictor):
                     or IS_RANCHER_SERVICE
                     or response == "NO"
                 ):
-                    unique_masked_logs = list(df_batch["maskedLog"].unique())
+                    unique_masked_logs = list(df_new_logs["maskedLog"].unique())
                     logger.info(f" {len(unique_masked_logs)} unique logs to inference.")
                     pred_scores_dict = opnilog_predictor.predict(unique_masked_logs)
 
                     if pred_scores_dict is None:
                         logger.warning("fail to make predictions.")
                     else:
-                        df_batch["opnilogConfidence"] = [
-                            pred_scores_dict[ml] for ml in df_batch["maskedLog"]
+                        df_new_logs["opnilogConfidence"] = [
+                            pred_scores_dict[ml] for ml in df_new_logs["maskedLog"]
                         ]
-                        df_batch["anomalyLevel"] = [
+                        df_new_logs["anomalyLevel"] = [
                             "Anomaly" if p < THRESHOLD else "Normal"
-                            for p in df_batch["opnilogConfidence"]
+                            for p in df_new_logs["opnilogConfidence"]
                         ]
-                        df_batch_list = df_batch.to_dict("records")
+                        save_cached_preds(pred_scores_dict, saved_preds)
+                        df_new_logs_list = df_new_logs.to_dict("records")
                         await nw.publish(
-                            "model_inferenced_logs",
-                            get_serialized_protobuf_object(df_batch_list),
+                            "inferenced_logs",
+                            get_serialized_protobuf_object(df_new_logs_list),
                         )
                         if IS_GPU_SERVICE:
                             logger.info("send new results back.")
-                            df_batch["gpu_service_result"] = True
+                            df_new_logs["gpu_service_result"] = True
                             await nw.publish(
                                 nats_subject="gpu_service_predictions",
-                                payload_df=df_batch.to_json().encode(),
+                                payload_df=df_new_logs.to_json().encode(),
                             )
         end_time = time.time()
         time_elapsed = end_time - start_time
