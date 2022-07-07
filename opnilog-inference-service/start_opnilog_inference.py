@@ -12,9 +12,9 @@ from collections import defaultdict
 import numpy as np
 import pandas as pd
 from const import IS_GPU_SERVICE, LOGGING_LEVEL, SERVICE_TYPE, THRESHOLD
-from loganomaly.loganomaly_pb import Payload, PayloadList
 from nats.aio.errors import ErrTimeout
 from opni_nats import NatsWrapper
+from opni_proto.log_anomaly_payload_pb import Payload, PayloadList
 from opnilog_predictor import OpniLogPredictor
 from opnilog_trainer import consume_signal, train_model
 from utils import load_cached_preds, s3_setup, save_cached_preds
