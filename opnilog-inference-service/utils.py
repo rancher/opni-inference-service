@@ -61,7 +61,6 @@ def save_cached_preds(new_preds: dict, saved_preds: dict):
             s3_client.meta.client.upload_file(
                 CACHED_PREDS_SAVEFILE, bucket_name, CACHED_PREDS_SAVEFILE
             )
-            logger.info(f"saved cached preds, current num of cache: {len(saved_preds)}")
         except Exception as e:
             logger.error(f"Failed to update predictions to s3. {e}")
 
