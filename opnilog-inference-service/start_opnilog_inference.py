@@ -128,7 +128,7 @@ async def run(df_payload, saved_preds, max_payload_size, opnilog_predictor):
         )
     else:
         start_time = time.time()
-        df_payload["inferenceModel"] = "opnilog"
+        df_payload["inference_model"] = "opnilog"
         for i in range(0, len(df_payload), max_payload_size):
             df_batch = df_payload[i : min(i + max_payload_size, len(df_payload))]
 
@@ -154,19 +154,19 @@ async def run(df_payload, saved_preds, max_payload_size, opnilog_predictor):
                     or IS_RANCHER_SERVICE
                     or response == "NO"
                 ):
-                    unique_masked_logs = list(df_batch["maskedLog"].unique())
+                    unique_masked_logs = list(df_batch["masked_log"].unique())
                     logger.info(f" {len(unique_masked_logs)} unique logs to inference.")
                     pred_scores_dict = opnilog_predictor.predict(unique_masked_logs)
 
                     if pred_scores_dict is None:
                         logger.warning("fail to make predictions.")
                     else:
-                        df_batch["opnilogConfidence"] = [
+                        df_batch["opnilog_confidence"] = [
                             pred_scores_dict[ml] for ml in df_batch["maskedLog"]
                         ]
-                        df_batch["anomalyLevel"] = [
+                        df_batch["anomaly_level"] = [
                             "Anomaly" if p < THRESHOLD else "Normal"
-                            for p in df_batch["opnilogConfidence"]
+                            for p in df_batch["opnilog_confidence"]
                         ]
                         df_batch_list = df_batch.to_dict("records")
                         await nw.publish(
