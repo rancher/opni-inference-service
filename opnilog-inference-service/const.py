@@ -70,7 +70,6 @@ params = HyperParameters()
 THRESHOLD = float(os.getenv("MODEL_THRESHOLD", params.MODEL_THRESHOLD))
 MIN_LOG_TOKENS = int(os.getenv("MIN_LOG_TOKENS", params.MIN_LOG_TOKENS))
 SERVICE_TYPE = os.getenv("SERVICE_TYPE", params.SERVICE_TYPE)
-IS_GPU_SERVICE = bool(os.getenv("IS_GPU_SERVICE", False))
 
 ## these 2 const are specifically for caching predictions
 CACHED_PREDS_SAVEFILE = (
@@ -79,7 +78,7 @@ CACHED_PREDS_SAVEFILE = (
     else "rancher-preds.txt"
     if SERVICE_TYPE == "rancher"
     else "gpu-preds.txt"
-    if IS_GPU_SERVICE
+    if SERVICE_TYPE == "gpu"
     else "cpu-preds.txt"
 )
 SAVE_FREQ = 25
