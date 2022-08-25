@@ -6,17 +6,16 @@ import os
 import sys
 import time
 import zipfile
-from collections import defaultdict
 
 # Third Party
 import pandas as pd
-from const import IS_GPU_SERVICE, LOGGING_LEVEL, SERVICE_TYPE, THRESHOLD
+from const import LOGGING_LEVEL, SERVICE_TYPE, THRESHOLD
 from nats.aio.errors import ErrTimeout
 from opni_nats import NatsWrapper
 from opni_proto.log_anomaly_payload_pb import Payload, PayloadList
 from opnilog_predictor import OpniLogPredictor
 from opnilog_trainer import consume_signal, train_model
-from utils import load_cached_preds, s3_setup, save_cached_preds
+from utils import s3_setup
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__file__)
@@ -61,12 +60,10 @@ async def consume_logs(logs_queue):
             )
         else:
             await nw.subscribe(
-                nats_subject="preprocessed_logs",
+                nats_subject="opnilog_workload_logs",
                 payload_queue=logs_queue,
                 nats_queue="workers",
-            )
-            await nw.subscribe(
-                nats_subject="gpu_service_predictions", payload_queue=logs_queue
+                subscribe_handler=subscribe_handler,
             )
 
 
@@ -75,8 +72,6 @@ async def infer_logs(logs_queue):
     coroutine to get payload from logs_queue, call inference rest API and put predictions to elasticsearch.
     """
     s3_setup()
-    saved_preds = defaultdict(float)
-    load_cached_preds(saved_preds)
     opnilog_predictor = OpniLogPredictor()
     if IS_PRETRAINED_SERVICE:
         opnilog_predictor.load(save_path="model-output/")
@@ -89,13 +84,15 @@ async def infer_logs(logs_queue):
     pending_list = []
     while True:
         payload = await logs_queue.get()
+        logging.info(type(payload))
         if payload is None:
             continue
         if len(payload) == 1:
             pending_list.append(payload[0])
         else:
+            logging.info(payload)
             df_payload = pd.DataFrame(payload)
-            await run(df_payload, saved_preds, max_payload_size, opnilog_predictor)
+            await run(df_payload, max_payload_size, opnilog_predictor)
             del df_payload
         start_time = time.time()
         if (start_time - last_time >= 1 and len(pending_list) > 0) or (
@@ -104,7 +101,7 @@ async def infer_logs(logs_queue):
             df_payload = pd.DataFrame(pending_list)
             last_time = start_time
             pending_list = []
-            await run(df_payload, saved_preds, max_payload_size, opnilog_predictor)
+            await run(df_payload, max_payload_size, opnilog_predictor)
             del df_payload
         del payload
         gc.collect()
@@ -199,6 +196,9 @@ if __name__ == "__main__":
 
     task = loop.create_task(init_nats())
     loop.run_until_complete(task)
+    logging.info(f"IS_GPU_SERVICE: {IS_GPU_SERVICE}")
+    logging.info(IS_CONTROL_PLANE_SERVICE)
+    logging.info(IS_RANCHER_SERVICE)
 
     if IS_PRETRAINED_SERVICE:
         init_model_task = loop.create_task(get_pretrain_model())
