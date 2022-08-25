@@ -11,21 +11,60 @@ import botocore
 from botocore.client import Config
 from const import (
     DEFAULT_MODEL_NAME,
+    ES_ENDPOINT,
+    ES_PASSWORD,
+    ES_USERNAME,
     LOGGING_LEVEL,
     S3_ACCESS_KEY,
     S3_BUCKET,
+    S3_ENDPOINT,
     S3_SECRET_KEY,
     TRAINING_DATA_PATH,
 )
+from elasticsearch import AsyncElasticsearch
+from masker import LogMasker
 from opni_nats import NatsWrapper
 from opnilog_parser import LogParser
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__file__)
 logger.setLevel(LOGGING_LEVEL)
+masker = LogMasker()
+
+es_instance = AsyncElasticsearch(
+    [ES_ENDPOINT],
+    port=9200,
+    http_compress=True,
+    http_auth=(ES_USERNAME, ES_PASSWORD),
+    verify_certs=False,
+    use_ssl=True,
+)
 
 
-def train_opnilog_model(s3_client, windows_folder_path):
+async def get_all_training_data(query):
+    all_training_data = []
+    scroll_id = ""
+    for i in range(0, 4):
+        if len(all_training_data) == 0:
+            current_page = await es_instance.search(
+                index="logs", body=query, scroll="1m", size=10000
+            )
+            results_hits = current_page["hits"]["hits"]
+            scroll_id = current_page["_scroll_id"]
+            for each_hit in results_hits:
+                all_training_data.append(masker.mask(each_hit["_source"]["log"]))
+        else:
+            current_page = await es_instance.scroll(scroll_id=scroll_id, scroll="1m")
+            logging.info(current_page)
+            scroll_id = current_page["_scroll_id"]
+            results_hits = current_page["hits"]["hits"]
+            for each_hit in results_hits:
+                all_training_data.append(masker.mask(each_hit["_source"]["log"]))
+        logging.info(len(all_training_data))
+    return all_training_data
+
+
+async def train_opnilog_model(s3_client, query):
     """
     This function will be used to load the training data and then train the new OpniLog model.
     If during this process, there is any exception, it will return False indicating that a new OpniLog model failed to
@@ -36,9 +75,9 @@ def train_opnilog_model(s3_client, windows_folder_path):
     parser = LogParser()
     # Load the training data.
     try:
-        texts = parser.load_data(windows_folder_path)
+        texts = await get_all_training_data(query)
     except Exception as e:
-        logging.error("Unable to load data.")
+        logging.error(f"Unable to load data. {e}")
         return False
     # Check to see if the length of the training data is at least 1. Otherwise, return False.
     if len(texts) > 0:
@@ -136,12 +175,12 @@ async def train_model(job_queue, nw):
         aws_secret_access_key=S3_SECRET_KEY,
         config=Config(signature_version="s3v4"),
     )
-    windows_folder_path = os.path.join(TRAINING_DATA_PATH, "windows")
     while True:
         new_job = await job_queue.get()  ## TODO: should the metadata being used?
+        query = json.loads(new_job)["payload"]
         logger.info("kick off a model training job...")
         res_s3_setup = s3_setup(s3_client)
-        model_trained_success = train_opnilog_model(s3_client, windows_folder_path)
+        model_trained_success = await train_opnilog_model(s3_client, query)
         await send_signal_to_nats(nw, model_trained_success)
 
 
