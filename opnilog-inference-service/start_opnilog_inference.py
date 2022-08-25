@@ -112,6 +112,7 @@ async def infer_logs(logs_queue):
     pending_list = []
     while True:
         payload = await logs_queue.get()
+        logging.info(type(payload))
         if payload is None:
             continue
         if type(payload) is dict:
@@ -131,6 +132,7 @@ async def infer_logs(logs_queue):
         if len(payload) == 1:
             pending_list.append(payload[0])
         else:
+            logging.info(payload)
             df_payload = pd.DataFrame(payload)
             await run(df_payload, max_payload_size, opnilog_predictor)
             del df_payload
@@ -230,6 +232,9 @@ if __name__ == "__main__":
 
     task = loop.create_task(init_nats())
     loop.run_until_complete(task)
+    logging.info(f"IS_GPU_SERVICE: {IS_GPU_SERVICE}")
+    logging.info(IS_CONTROL_PLANE_SERVICE)
+    logging.info(IS_RANCHER_SERVICE)
 
     if IS_PRETRAINED_SERVICE:
         init_model_task = loop.create_task(get_pretrain_model())
