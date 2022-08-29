@@ -23,8 +23,16 @@ logger = logging.getLogger(__file__)
 logger.setLevel(LOGGING_LEVEL)
 
 nw = NatsWrapper()
-IS_CONTROL_PLANE_SERVICE = SERVICE_TYPE == "control-plane"
-IS_RANCHER_SERVICE = SERVICE_TYPE == "rancher"
+IS_PRETRAINED_SERVICE = (
+    SERVICE_TYPE == "control-plane"
+    or SERVICE_TYPE == "rancher"
+    or SERVICE_TYPE == "longhorn"
+)
+service_nats_subjects = {
+    "control-plane": "opnilog_cp_logs",
+    "rancher": "opnilog_rancher_logs",
+    "longhorn": "opnilog_longhorn_logs",
+}
 
 
 async def consume_logs(logs_queue):
@@ -38,16 +46,9 @@ async def consume_logs(logs_queue):
         logs = (log_payload_list.parse(payload_data)).items
         await logs_queue.put(logs)
 
-    if IS_CONTROL_PLANE_SERVICE:
+    if IS_PRETRAINED_SERVICE:
         await nw.subscribe(
-            nats_subject="opnilog_cp_logs",
-            payload_queue=logs_queue,
-            nats_queue="workers",
-            subscribe_handler=subscribe_handler,
-        )
-    elif IS_RANCHER_SERVICE:
-        await nw.subscribe(
-            nats_subject="opnilog_rancher_logs",
+            nats_subject=service_nats_subjects[SERVICE_TYPE],
             payload_queue=logs_queue,
             nats_queue="workers",
             subscribe_handler=subscribe_handler,
@@ -77,13 +78,13 @@ async def infer_logs(logs_queue):
     saved_preds = defaultdict(float)
     load_cached_preds(saved_preds)
     opnilog_predictor = OpniLogPredictor()
-    if IS_CONTROL_PLANE_SERVICE or IS_RANCHER_SERVICE:
+    if IS_PRETRAINED_SERVICE:
         opnilog_predictor.load(save_path="model-output/")
     else:
         opnilog_predictor.download_from_s3()
         opnilog_predictor.load()
 
-    max_payload_size = 128 if (IS_CONTROL_PLANE_SERVICE or IS_RANCHER_SERVICE) else 512
+    max_payload_size = 128 if (IS_PRETRAINED_SERVICE) else 512
     last_time = time.time()
     pending_list = []
     while True:
@@ -124,9 +125,7 @@ async def run(df_payload, saved_preds, max_payload_size, opnilog_predictor):
             df_batch = df_payload[i : min(i + max_payload_size, len(df_payload))]
 
             if len(df_batch) > 0:
-                if not (
-                    IS_GPU_SERVICE or IS_CONTROL_PLANE_SERVICE or IS_RANCHER_SERVICE
-                ):
+                if not (IS_GPU_SERVICE or IS_PRETRAINED_SERVICE):
                     try:  # try to post request to GPU service. response would be b"YES" if accepted, b"NO" for declined/timeout
                         response = await nw.request(
                             "gpu_service_inference",
@@ -139,12 +138,7 @@ async def run(df_payload, saved_preds, max_payload_size, opnilog_predictor):
                         response = "NO"
                     logger.info(f"{response} for GPU service")
 
-                if (
-                    IS_GPU_SERVICE
-                    or IS_CONTROL_PLANE_SERVICE
-                    or IS_RANCHER_SERVICE
-                    or response == "NO"
-                ):
+                if IS_GPU_SERVICE or IS_PRETRAINED_SERVICE or response == "NO":
                     unique_masked_logs = list(df_batch["masked_log"].unique())
                     logger.info(f" {len(unique_masked_logs)} unique logs to inference.")
                     pred_scores_dict = opnilog_predictor.predict(unique_masked_logs)
@@ -206,13 +200,13 @@ if __name__ == "__main__":
     task = loop.create_task(init_nats())
     loop.run_until_complete(task)
 
-    if IS_CONTROL_PLANE_SERVICE or IS_RANCHER_SERVICE:
+    if IS_PRETRAINED_SERVICE:
         init_model_task = loop.create_task(get_pretrain_model())
         model_loaded = loop.run_until_complete(init_model_task)
         if not model_loaded:
             sys.exit(1)
 
-    if IS_CONTROL_PLANE_SERVICE or IS_RANCHER_SERVICE:
+    if IS_PRETRAINED_SERVICE:
         loop.run_until_complete(
             asyncio.gather(
                 inference_coroutine,
