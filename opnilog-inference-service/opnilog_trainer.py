@@ -41,41 +41,54 @@ es_instance = AsyncElasticsearch(
 )
 
 
-async def get_all_training_data(query):
+async def get_all_training_data(payload):
     all_training_data = []
     scroll_id = ""
-    for i in range(0, 4):
+    logging.info(payload)
+    query = payload["payload"]["query"]
+    max_size = payload["payload"]["max_size"]
+    logging.info(query)
+    while True:
         if len(all_training_data) == 0:
             current_page = await es_instance.search(
                 index="logs", body=query, scroll="1m", size=10000
             )
             results_hits = current_page["hits"]["hits"]
             scroll_id = current_page["_scroll_id"]
+            logging.info(results_hits[0])
             for each_hit in results_hits:
                 all_training_data.append(masker.mask(each_hit["_source"]["log"]))
+                if len(all_training_data) == max_size:
+                    return all_training_data
         else:
             current_page = await es_instance.scroll(scroll_id=scroll_id, scroll="1m")
-            logging.info(current_page)
             scroll_id = current_page["_scroll_id"]
             results_hits = current_page["hits"]["hits"]
-            for each_hit in results_hits:
-                all_training_data.append(masker.mask(each_hit["_source"]["log"]))
-        logging.info(len(all_training_data))
-    return all_training_data
+            if len(results_hits) > 0:
+                for each_hit in results_hits:
+                    all_training_data.append(masker.mask(each_hit["_source"]["log"]))
+                    if len(all_training_data) == max_size:
+                        return all_training_data
+            else:
+                return all_training_data
 
 
-async def train_opnilog_model(s3_client, query):
+async def train_opnilog_model(nw, s3_client, query):
     """
     This function will be used to load the training data and then train the new OpniLog model.
     If during this process, there is any exception, it will return False indicating that a new OpniLog model failed to
     train. Otherwise, it will return True.
     """
-    nr_epochs = 3
+    nr_epochs = 1
     num_samples = 0
     parser = LogParser()
+    await nw.connect()
+    model_training_payload = {"status": "training"}
+    await nw.publish("model_ready", json.dumps(model_training_payload).encode())
     # Load the training data.
     try:
         texts = await get_all_training_data(query)
+        logging.info(f"Length of text is {len(texts)}")
     except Exception as e:
         logging.error(f"Unable to load data. {e}")
         return False
@@ -177,10 +190,10 @@ async def train_model(job_queue, nw):
     )
     while True:
         new_job = await job_queue.get()  ## TODO: should the metadata being used?
-        query = json.loads(new_job)["payload"]
+        query = json.loads(new_job)
         logger.info("kick off a model training job...")
         res_s3_setup = s3_setup(s3_client)
-        model_trained_success = await train_opnilog_model(s3_client, query)
+        model_trained_success = await train_opnilog_model(nw, s3_client, query)
         await send_signal_to_nats(nw, model_trained_success)
 
 

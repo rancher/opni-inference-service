@@ -113,68 +113,6 @@ async def infer_logs(logs_queue):
         gc.collect()
 
 
-async def run(df_payload, saved_preds, max_payload_size, opnilog_predictor):
-    # Memorize predictions from GPU services.
-    if "gpu_service_result" in df_payload.columns:
-        logger.info("saved predictions from GPU service.")
-        save_cached_preds(
-            dict(zip(df_payload["masked_log"], df_payload["opnilog_confidence"])),
-            saved_preds,
-        )
-    else:
-        start_time = time.time()
-        df_payload["inference_model"] = "opnilog"
-        for i in range(0, len(df_payload), max_payload_size):
-            df_batch = df_payload[i : min(i + max_payload_size, len(df_payload))]
-
-            if len(df_batch) > 0:
-                if not (IS_GPU_SERVICE or IS_PRETRAINED_SERVICE):
-                    try:  # try to post request to GPU service. response would be b"YES" if accepted, b"NO" for declined/timeout
-                        response = await nw.request(
-                            "gpu_service_inference",
-                            df_batch.to_json().encode(),
-                            timeout=1,
-                        )
-                        response = response.data.decode()
-                    except ErrTimeout:
-                        logger.warning("request to GPU service timeout.")
-                        response = "NO"
-                    logger.info(f"{response} for GPU service")
-
-                if IS_GPU_SERVICE or IS_PRETRAINED_SERVICE or response == "NO":
-                    unique_masked_logs = list(df_batch["masked_log"].unique())
-                    logger.info(f" {len(unique_masked_logs)} unique logs to inference.")
-                    pred_scores_dict = opnilog_predictor.predict(unique_masked_logs)
-
-                    if pred_scores_dict is None:
-                        logger.warning("fail to make predictions.")
-                    else:
-                        df_batch["opnilog_confidence"] = [
-                            pred_scores_dict[ml] for ml in df_batch["masked_log"]
-                        ]
-                        df_batch["anomaly_level"] = [
-                            "Anomaly" if p < THRESHOLD else "Normal"
-                            for p in df_batch["opnilog_confidence"]
-                        ]
-                        df_batch_list = list(
-                            map(lambda row: Payload(*row), df_batch.values)
-                        )
-                        await nw.publish(
-                            "model_inferenced_logs",
-                            bytes(PayloadList(items=df_batch_list)),
-                        )
-                        if IS_GPU_SERVICE:
-                            logger.info("send new results back.")
-                            df_batch["gpu_service_result"] = True
-                            await nw.publish(
-                                nats_subject="gpu_service_predictions",
-                                payload_df=df_batch.to_json().encode(),
-                            )
-        end_time = time.time()
-        time_elapsed = end_time - start_time
-        logging.info(
-            f"Time elapsed here for model inferencing is {time_elapsed} seconds"
-        )
 async def run(df_payload, max_payload_size, opnilog_predictor):
 
     start_time = time.time()
