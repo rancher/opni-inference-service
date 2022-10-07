@@ -66,6 +66,10 @@ class OpniLogPredictor:
         except Exception as e:
             logger.error(f"No OpniLog model currently {e}")
 
+    def reset_model(self):
+        self.parser = None
+        self.is_ready = False
+
     def predict(self, logs: List[str]):
         """
         this methed defines the activity of model prediction for opnilog service
