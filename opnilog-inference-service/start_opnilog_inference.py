@@ -9,7 +9,7 @@ import zipfile
 
 # Third Party
 import pandas as pd
-from const import LOGGING_LEVEL, SERVICE_TYPE, THRESHOLD
+from const import LOGGING_LEVEL, S3_BUCKET, SERVICE_TYPE, THRESHOLD
 from nats.aio.errors import ErrTimeout
 from opni_nats import NatsWrapper
 from opni_proto.log_anomaly_payload_pb import Payload, PayloadList
@@ -93,6 +93,15 @@ async def infer_logs(logs_queue):
         logging.info(type(payload))
         if payload is None:
             continue
+        if type(payload) is dict:
+            if "bucket" in payload and payload["bucket"] == S3_BUCKET:
+                opnilog_predictor.download_from_s3(payload)
+                opnilog_predictor.load()
+                continue
+            if "status" in payload and payload["status"] == "training":
+                opnilog_predictor.reset_model()
+                continue
+
         if len(payload) == 1:
             pending_list.append(payload[0])
         else:
