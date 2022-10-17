@@ -1,6 +1,7 @@
 # Standard Library
 import asyncio
 import gc
+import json
 import logging
 import os
 import sys
@@ -51,6 +52,10 @@ async def consume_logs(logs_queue):
         logs = (log_payload_list.parse(payload_data)).items
         await logs_queue.put(logs)
 
+    async def model_subscribe_handler(msg):
+        model_data = msg.data
+        await logs_queue.put(json.loads(model_data.decode()))
+
     if IS_PRETRAINED_SERVICE:
         await nw.subscribe(
             nats_subject=service_nats_subjects[SERVICE_TYPE],
@@ -59,10 +64,16 @@ async def consume_logs(logs_queue):
             subscribe_handler=subscribe_handler,
         )
     else:
-        await nw.subscribe(nats_subject="model_ready", payload_queue=logs_queue)
+        await nw.subscribe(
+            nats_subject="model_ready",
+            payload_queue=logs_queue,
+            subscribe_handler=model_subscribe_handler,
+        )
         if IS_GPU_SERVICE:
             await nw.subscribe(
-                nats_subject="gpu_service_inference_internal", payload_queue=logs_queue
+                nats_subject="gpu_service_inference_internal",
+                payload_queue=logs_queue,
+                subscribe_handler=subscribe_handler,
             )
         else:
             await nw.subscribe(
@@ -162,8 +173,9 @@ async def run(df_payload, max_payload_size, opnilog_predictor):
                     df_batch_list = list(
                         map(lambda row: Payload(*row), df_batch.values)
                     )
+                    logging.info("about to send results back here.")
                     await nw.publish(
-                        "model_inferenced_logs",
+                        "model_inferenced_workload_logs",
                         bytes(PayloadList(items=df_batch_list)),
                     )
     end_time = time.time()
