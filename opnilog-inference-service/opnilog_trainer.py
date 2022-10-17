@@ -163,10 +163,6 @@ async def send_signal_to_nats(nw, training_success):
         logger.info(
             "Published to model_ready Nats subject that new OpniLog model is ready to be used for inferencing."
         )
-    else:
-        opnilog_payload = {"status": "unsuccessful"}
-        await nw.connect()
-        await nw.publish(nats_subject="model_ready")
 
 
 async def consume_signal(job_queue, nw):
