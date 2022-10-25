@@ -44,10 +44,8 @@ es_instance = AsyncElasticsearch(
 async def get_all_training_data(payload):
     all_training_data = []
     scroll_id = ""
-    logging.info(payload)
     query = payload["payload"]["query"]
     max_size = payload["payload"]["max_size"]
-    logging.info(query)
     while True:
         if len(all_training_data) == 0:
             current_page = await es_instance.search(
@@ -55,7 +53,6 @@ async def get_all_training_data(payload):
             )
             results_hits = current_page["hits"]["hits"]
             scroll_id = current_page["_scroll_id"]
-            logging.info(results_hits[0])
             for each_hit in results_hits:
                 all_training_data.append(masker.mask(each_hit["_source"]["log"]))
                 if len(all_training_data) == max_size:
@@ -79,7 +76,7 @@ async def train_opnilog_model(nw, s3_client, query):
     If during this process, there is any exception, it will return False indicating that a new OpniLog model failed to
     train. Otherwise, it will return True.
     """
-    nr_epochs = 1
+    nr_epochs = 3
     num_samples = 0
     parser = LogParser()
     await nw.connect()
@@ -88,7 +85,6 @@ async def train_opnilog_model(nw, s3_client, query):
     # Load the training data.
     try:
         texts = await get_all_training_data(query)
-        logging.info(f"Length of text is {len(texts)}")
     except Exception as e:
         logging.error(f"Unable to load data. {e}")
         return False
