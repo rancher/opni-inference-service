@@ -171,10 +171,16 @@ async def run(df_payload, max_payload_size, opnilog_predictor):
                     df_batch_list = list(
                         map(lambda row: Payload(*row), df_batch.values)
                     )
-                    await nw.publish(
-                        "model_inferenced_workload_logs",
-                        bytes(PayloadList(items=df_batch_list)),
-                    )
+                    if IS_GPU_SERVICE or IS_CPU_SERVICE:
+                        await nw.publish(
+                            "model_inferenced_workload_logs",
+                            bytes(PayloadList(items=df_batch_list)),
+                        )
+                    else:
+                        await nw.publish(
+                            "model_inferenced_pretrained_logs",
+                            bytes(PayloadList(items=df_batch_list)),
+                        )
     end_time = time.time()
     time_elapsed = end_time - start_time
     logging.info(f"Time elapsed here for model inferencing is {time_elapsed} seconds")
