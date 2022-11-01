@@ -171,7 +171,7 @@ async def run(df_payload, max_payload_size, opnilog_predictor):
                     df_batch_list = list(
                         map(lambda row: Payload(*row), df_batch.values)
                     )
-                    if IS_GPU_SERVICE or IS_CPU_SERVICE:
+                    if IS_WORKLOAD_SERVICE:
                         await nw.publish(
                             "model_inferenced_workload_logs",
                             bytes(PayloadList(items=df_batch_list)),
