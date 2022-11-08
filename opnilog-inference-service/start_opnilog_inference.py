@@ -33,11 +33,14 @@ service_nats_subjects = {
     "rancher": "opnilog_rancher_logs",
     "longhorn": "opnilog_longhorn_logs",
 }
-IS_CONTROL_PLANE_SERVICE = SERVICE_TYPE == "control-plane"
-IS_RANCHER_SERVICE = SERVICE_TYPE == "rancher"
+
 IS_GPU_SERVICE = SERVICE_TYPE == "gpu"
 IS_CPU_SERVICE = SERVICE_TYPE == "cpu"
-IS_PRETRAINED_SERVICE = IS_CONTROL_PLANE_SERVICE or IS_RANCHER_SERVICE
+IS_PRETRAINED_SERVICE = (
+    SERVICE_TYPE == "control-plane"
+    or SERVICE_TYPE == "rancher"
+    or SERVICE_TYPE == "longhorn"
+)
 IS_WORKLOAD_SERVICE = IS_CPU_SERVICE or IS_GPU_SERVICE
 
 
