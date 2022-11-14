@@ -59,6 +59,10 @@ async def consume_logs(logs_queue):
         model_data = msg.data
         await logs_queue.put(json.loads(model_data.decode()))
 
+    async def gpu_subscribe_handler(msg):
+        reply_subject = msg.reply
+        await nw.publish(reply_subject, b"running")
+
     if IS_PRETRAINED_SERVICE:
         await nw.subscribe(
             nats_subject=service_nats_subjects[SERVICE_TYPE],
@@ -77,6 +81,10 @@ async def consume_logs(logs_queue):
                 nats_subject="gpu_service_inference_internal",
                 payload_queue=logs_queue,
                 subscribe_handler=subscribe_handler,
+            )
+            await nw.subscribe(
+                nats_subject="gpu_service_running",
+                subscribe_handler=gpu_subscribe_handler,
             )
         else:
             await nw.subscribe(
