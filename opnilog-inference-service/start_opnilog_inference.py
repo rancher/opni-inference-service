@@ -72,7 +72,7 @@ async def consume_logs(logs_queue):
         )
     else:
         await nw.subscribe(
-            nats_subject="model_ready",
+            nats_subject="model_update",
             payload_queue=logs_queue,
             subscribe_handler=model_subscribe_handler,
         )
@@ -119,7 +119,9 @@ async def infer_logs(logs_queue):
                 opnilog_predictor.download_from_s3(payload)
                 opnilog_predictor.load()
                 continue
-            if "status" in payload and payload["status"] == "training":
+            if "status" in payload and (
+                payload["status"] == "training" or payload["status"] == "reset"
+            ):
                 opnilog_predictor.reset_model()
                 continue
 
