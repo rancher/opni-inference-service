@@ -81,13 +81,18 @@ async def train_opnilog_model(nw, s3_client, query):
     parser = LogParser()
     await nw.connect()
     model_training_payload = {"status": "training"}
-    await nw.publish("model_ready", json.dumps(model_training_payload).encode())
+    await nw.publish("model_update", json.dumps(model_training_payload).encode())
     # Load the training data.
     try:
         texts = await get_all_training_data(query)
     except Exception as e:
         logging.error(f"Unable to load data. {e}")
         return False
+    try:
+        if not os.path.exists("output/"):
+            os.makedirs("output")
+    except Exception as e:
+        logging.error("Unable to create output folder.")
     # Check to see if the length of the training data is at least 1. Otherwise, return False.
     if len(texts) > 0:
         try:
@@ -137,12 +142,12 @@ def s3_setup(s3_client):
 
 
 async def send_signal_to_nats(nw, training_success):
-    # Function that will send signal to Nats subjects gpu_trainingjob_status and model_ready.
+    # Function that will send signal to Nats subjects gpu_trainingjob_status and model_update.
     await nw.connect()
     # Regardless of a successful training of OpniLog model, send JobEnd message to Nats subject gpu_trainingjob_status to make GPU available again.
     await nw.publish("gpu_trainingjob_status", b"JobEnd")
 
-    # If OpniLog model has been successfully trained, send payload to model_ready Nats subject that new model is ready to be uploaded from Minio.
+    # If OpniLog model has been successfully trained, send payload to model_update Nats subject that new model is ready to be uploaded from Minio.
     logger.info(f"training status : {training_success}")
     if training_success:
         opnilog_payload = {
@@ -154,10 +159,10 @@ async def send_signal_to_nats(nw, training_success):
         }
         await nw.connect()
         await nw.publish(
-            nats_subject="model_ready", payload_df=json.dumps(opnilog_payload).encode()
+            nats_subject="model_update", payload_df=json.dumps(opnilog_payload).encode()
         )
         logger.info(
-            "Published to model_ready Nats subject that new OpniLog model is ready to be used for inferencing."
+            "Published to model_update Nats subject that new OpniLog model is ready to be used for inferencing."
         )
 
 
