@@ -46,28 +46,24 @@ async def get_all_training_data(payload):
     scroll_id = ""
     query = payload["payload"]["query"]
     max_size = payload["payload"]["max_size"]
+    first_iteration = True
     while True:
-        if len(all_training_data) == 0:
+        if first_iteration:
             current_page = await es_instance.search(
                 index="logs", body=query, scroll="1m", size=10000
             )
-            results_hits = current_page["hits"]["hits"]
+            first_iteration = False
+        else:
+            current_page = await es_instance.scroll(scroll_id=scroll_id, scroll="1m")
+        results_hits = current_page["hits"]["hits"]
+        if len(results_hits) > 0:
             scroll_id = current_page["_scroll_id"]
             for each_hit in results_hits:
                 all_training_data.append(masker.mask(each_hit["_source"]["log"]))
                 if len(all_training_data) == max_size:
                     return all_training_data
         else:
-            current_page = await es_instance.scroll(scroll_id=scroll_id, scroll="1m")
-            scroll_id = current_page["_scroll_id"]
-            results_hits = current_page["hits"]["hits"]
-            if len(results_hits) > 0:
-                for each_hit in results_hits:
-                    all_training_data.append(masker.mask(each_hit["_source"]["log"]))
-                    if len(all_training_data) == max_size:
-                        return all_training_data
-            else:
-                return all_training_data
+            return all_training_data
 
 
 async def train_opnilog_model(nw, s3_client, query):
