@@ -124,6 +124,9 @@ async def infer_logs(logs_queue):
             ):
                 opnilog_predictor.reset_model()
                 continue
+        if not opnilog_predictor.is_ready:
+            logging.info("No model currently trained.")
+            continue
 
         if len(payload) == 1:
             pending_list.append(payload[0])
@@ -164,6 +167,9 @@ async def run(df_payload, max_payload_size, opnilog_predictor):
                 except ErrTimeout:
                     logger.warning("request to GPU service timeout.")
                     response = "NO"
+                except KeyError:
+                    logger.warning("unable to send request to GPU service.")
+                    response = "No"
                 logger.info(f"{response} for GPU service")
 
             if not IS_CPU_SERVICE or response == "NO":
