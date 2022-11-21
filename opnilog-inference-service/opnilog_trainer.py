@@ -47,6 +47,8 @@ async def get_all_training_data(payload):
     query = payload["payload"]["query"]
     max_size = payload["payload"]["max_size"]
     first_iteration = True
+    training_data_dict = dict()
+    max_log_frequency = 15
     while True:
         if first_iteration:
             current_page = await es_instance.search(
@@ -59,7 +61,12 @@ async def get_all_training_data(payload):
         if len(results_hits) > 0:
             scroll_id = current_page["_scroll_id"]
             for each_hit in results_hits:
-                all_training_data.append(masker.mask(each_hit["_source"]["log"]))
+                masked_result = masker.mask(each_hit["_source"]["log"])
+                if not masked_result in training_data_dict:
+                    training_data_dict[masked_result] = 0
+                training_data_dict[masked_result] += 1
+                if training_data_dict[masked_result] <= max_log_frequency:
+                    all_training_data.append(masked_result)
                 if len(all_training_data) == max_size:
                     return all_training_data
         else:
