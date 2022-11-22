@@ -28,7 +28,7 @@ class RegexMasker:
         self.remove_delimiters = r'([| \(|\)|\[|\]\'|\{|\}|"|,])'
         self.ansi_escape = re.compile(r"(\x9B|\x1B\[)[0-?]*[ -\/]*[@-~]")
 
-    def mask(self, content: str, is_control_plane_log: bool):
+    def mask(self, content: str, is_control_plane_log: bool = False):
 
         # get rid of escape keys
         content = self.ansi_escape.sub("", content)
@@ -144,5 +144,5 @@ class LogMasker:
             masking_instructions_before_value_assigning_token_split,
         )
 
-    def mask(self, content: str, is_control_plane_log: bool):
+    def mask(self, content: str, is_control_plane_log: bool = False):
         return self.masker.mask(content, is_control_plane_log)
