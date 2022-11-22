@@ -132,12 +132,14 @@ class LogParser:
         ## train if no model
         model.train()
         logging.info(f"#######Training Model within {self.nr_epochs} epochs...######")
+        training_start_time = time.time()
         for epoch in range(self.nr_epochs):
-            logging.info(f"Epoch: {epoch}")
             self.run_epoch(
                 train_dataloader,
                 model,
                 SimpleLossCompute(model.generator, criterion, model_opt),
+                epoch=epoch,
+                training_start_time=training_start_time,
             )
 
         self.save_model(model=model, model_opt=model_opt, epoch=self.nr_epochs, loss=0)
@@ -335,7 +337,7 @@ class LogParser:
                 idxs.append(dg)
         return torch.stack(src), torch.stack(trg), torch.Tensor(idxs)
 
-    def run_epoch(self, dataloader, model, loss_compute):
+    def run_epoch(self, dataloader, model, loss_compute, epoch, training_start_time):
 
         start = time.time()
         total_tokens = 0
@@ -367,9 +369,10 @@ class LogParser:
 
             if i % self.step_size == 1:
                 elapsed = time.time() - start
+                training_progress = (i / len(dataloader) + epoch) / self.nr_epochs
+                total_time_taken = time.time() - training_start_time
                 logging.info(
-                    "Epoch Step: %d / %d Loss: %f Tokens per Sec: %f"
-                    % (i, len(dataloader), loss / batch.ntokens, tokens / elapsed)
+                    f"| Epoch: {epoch} | Total Progress: {(training_progress * 100):.2f}% | Training Time Taken: {total_time_taken:.2f}s | ETC: {(total_time_taken // training_progress)}s | Epoch Step: {i}/{len(dataloader)} | Loss: {(loss / batch.ntokens):.4f} | Tokens per Sec: {(tokens / elapsed):.2f} |"
                 )
                 start = time.time()
                 tokens = 0
