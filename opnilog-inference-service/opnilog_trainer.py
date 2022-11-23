@@ -72,7 +72,6 @@ async def get_all_training_data(payload):
         else:
             break
     masked_log_frequency_values = list(training_data_frequency_dict.values())
-    logging.info(masked_log_frequency_values)
     mean_frequency_value = int(np.mean(masked_log_frequency_values))
     max_frequency_value = int(np.sqrt(int(np.max(masked_log_frequency_values))))
     min_frequency_value = int(np.sqrt(mean_frequency_value))
