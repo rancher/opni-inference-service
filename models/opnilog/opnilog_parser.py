@@ -373,6 +373,11 @@ class LogParser:
                 logging.info(
                     f"| Epoch: {epoch} | Total Progress: {(training_progress * 100):.2f}% | Training Time Taken: {total_time_taken:.2f}s | ETC: {(total_time_taken // training_progress)}s | Epoch Step: {i}/{len(dataloader)} | Loss: {(loss / batch.ntokens):.4f} | Tokens per Sec: {(tokens / elapsed):.2f} |"
                 )
+                model_training_stats = {
+                    "progress": training_progress * 100,
+                    "total_time_taken": total_time_taken,
+                    "etc": total_time_taken // training_progress,
+                }
                 start = time.time()
                 tokens = 0
         return total_loss / total_tokens
