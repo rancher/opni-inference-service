@@ -8,7 +8,6 @@ import shutil
 # Third Party
 import boto3
 import botocore
-import numpy as np
 from botocore.client import Config
 from const import (
     DEFAULT_MODEL_NAME,
@@ -48,8 +47,6 @@ async def get_all_training_data(payload):
     query = payload["payload"]["query"]
     max_size = payload["payload"]["max_size"]
     first_iteration = True
-    training_data_frequency_dict = dict()
-    current_log_count = 0
     while True:
         if first_iteration:
             current_page = await es_instance.search(
@@ -62,29 +59,11 @@ async def get_all_training_data(payload):
         if len(results_hits) > 0:
             scroll_id = current_page["_scroll_id"]
             for each_hit in results_hits:
-                masked_result = masker.mask(each_hit["_source"]["log"])
-                if not masked_result in training_data_frequency_dict:
-                    training_data_frequency_dict[masked_result] = 0
-                training_data_frequency_dict[masked_result] += 1
-                current_log_count += 1
-                if current_log_count == max_size:
-                    break
+                all_training_data.append(masker.mask(each_hit["_source"]["log"]))
+                if len(all_training_data) == max_size:
+                    return all_training_data
         else:
-            break
-    masked_log_frequency_values = list(training_data_frequency_dict.values())
-    mean_frequency_value = int(np.mean(masked_log_frequency_values))
-    max_frequency_value = int(np.sqrt(int(np.max(masked_log_frequency_values))))
-    min_frequency_value = int(np.sqrt(mean_frequency_value))
-    for masked_log in training_data_frequency_dict:
-        if training_data_frequency_dict[masked_log] <= min_frequency_value:
-            for idx in range(0, min_frequency_value):
-                all_training_data.append(masked_log)
-        else:
-            for idx in range(
-                0, min(max_frequency_value, training_data_frequency_dict[masked_log])
-            ):
-                all_training_data.append(masked_log)
-    return all_training_data
+            return all_training_data
 
 
 async def train_opnilog_model(nw, s3_client, query):
