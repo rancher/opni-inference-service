@@ -7,9 +7,9 @@ RUN zypper -n ref  && \
 COPY ./requirements.txt /app/requirements.txt
  RUN pip install --no-cache-dir -r /app/requirements.txt
 
-COPY ./opnilog-inference-service/ /app/opnilog-inference-service/
+COPY ./opniInferenceService/ /app/opniInferenceService/
 
 RUN chmod a+rwx -R /app
 WORKDIR /app
 
-CMD [ "python", "./opnilog-inference-service/start_opnilog_inference.py" ]
+CMD [ "python", "./opniInferenceService/start_opnilog_inference.py" ]
