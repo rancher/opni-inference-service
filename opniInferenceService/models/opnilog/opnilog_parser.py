@@ -7,8 +7,8 @@ import time
 import pandas as pd
 import torch
 import torch.nn as nn
-from opnilog_model import *  # should improve this
-from opnilog_tokenizer import LogTokenizer
+from models.opnilog.opnilog_model import *  # should improve this
+from models.opnilog.opnilog_tokenizer import LogTokenizer
 from torchvision import transforms
 
 # constant

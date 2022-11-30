@@ -14,11 +14,12 @@ from const import (
     LOGGING_LEVEL,
     S3_ACCESS_KEY,
     S3_BUCKET,
+    S3_ENDPOINT,
     S3_SECRET_KEY,
     TRAINING_DATA_PATH,
 )
+from models.opnilog.opnilog_parser import LogParser
 from opni_nats import NatsWrapper
-from opnilog_parser import LogParser
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__file__)

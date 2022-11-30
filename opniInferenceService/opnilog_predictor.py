@@ -5,7 +5,7 @@ from typing import List
 
 # Third Party
 import boto3
-import inference as opniloginf
+import models.opnilog.inference as opniloginf
 from botocore.config import Config
 from const import (
     DEFAULT_MODELREADY_PAYLOAD,
@@ -15,7 +15,7 @@ from const import (
     S3_ENDPOINT,
     S3_SECRET_KEY,
 )
-from opnilog_parser import using_GPU
+from models.opnilog.opnilog_parser import using_GPU
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__file__)

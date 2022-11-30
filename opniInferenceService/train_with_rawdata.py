@@ -3,8 +3,8 @@ import json
 import logging
 
 # Third Party
-from masker import LogMasker
-from opnilog_parser import LogParser
+from models.opnilog.masker import LogMasker
+from models.opnilog.opnilog_parser import LogParser
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(message)s")
 
