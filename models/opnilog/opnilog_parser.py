@@ -1,4 +1,5 @@
 # Standard Library
+import json
 import logging
 import os
 import time
@@ -14,6 +15,7 @@ from torchvision import transforms
 # constant
 # tell torch using or not using GPU
 using_GPU = True if torch.cuda.device_count() > 0 else False
+MODEL_STATS_ENDPOINT = "http://opni-internal:11080/ModelTraining/model/statistics"
 if not using_GPU:
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
 else:
@@ -141,6 +143,15 @@ class LogParser:
                 epoch=epoch,
                 training_start_time=training_start_time,
             )
+        end_time = time.time()
+        model_training_stats = {
+            "percentageCompleted": 100,
+            "timeTraining": int(end_time - training_start_time),
+            "remainingTime": 0,
+        }
+        result = requests.post(
+            MODEL_STATS_ENDPOINT, data=json.dumps(model_training_stats).encode()
+        )
 
         self.save_model(model=model, model_opt=model_opt, epoch=self.nr_epochs, loss=0)
 
@@ -369,16 +380,23 @@ class LogParser:
 
             if i % self.step_size == 1:
                 elapsed = time.time() - start
-                training_progress = (i / len(dataloader) + epoch) / self.nr_epochs
+                training_progress = ((i / len(dataloader)) + epoch) / self.nr_epochs
                 total_time_taken = time.time() - training_start_time
+                remaining_time = (
+                    total_time_taken // training_progress
+                ) - total_time_taken
                 logging.info(
-                    f"| Epoch: {epoch} | Total Progress: {(training_progress * 100):.2f}% | Training Time Taken: {total_time_taken:.2f}s | ETC: {(total_time_taken // training_progress)}s | Epoch Step: {i}/{len(dataloader)} | Loss: {(loss / batch.ntokens):.4f} | Tokens per Sec: {(tokens / elapsed):.2f} |"
+                    f"| Epoch: {epoch} | Total Progress: {(training_progress * 100):.2f}% | Training Time Taken: {total_time_taken:.2f}s | ETC: {(remaining_time):.2f}s | Epoch Step: {i}/{len(dataloader)} | Loss: {(loss / batch.ntokens):.4f} | Tokens per Sec: {(tokens / elapsed):.2f} |"
                 )
                 model_training_stats = {
-                    "progress": training_progress * 100,
-                    "total_time_taken": total_time_taken,
-                    "etc": total_time_taken // training_progress,
+                    "percentageCompleted": int(100 * training_progress),
+                    "timeTraining": int(total_time_taken),
+                    "remainingTime": int(remaining_time),
+                    "currentEpoch": epoch,
                 }
+                result = requests.post(
+                    MODEL_STATS_ENDPOINT, data=json.dumps(model_training_stats).encode()
+                )
                 start = time.time()
                 tokens = 0
         return total_loss / total_tokens
