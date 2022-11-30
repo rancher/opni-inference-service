@@ -5,7 +5,7 @@ from typing import List
 
 # Third Party
 import boto3
-import models.opnilog.inference as opniloginf
+import inference as opniloginf
 from botocore.config import Config
 from const import (
     DEFAULT_MODELREADY_PAYLOAD,
