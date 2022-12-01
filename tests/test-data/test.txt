@@ -1,0 +1,3 @@
+{"log":"I0414 20:17:14.837085       1 clientconn.go:948] ClientConn switching balancer to \"pick_first\"\n","stream":"stderr","time":"2021-04-14T20:17:14.837147585Z"}
+{"log": "I0623 19:41:07.935177   15708 container_manager_linux.go:490] [ContainerManager]: Discovered runtime cgroups name: /system.slice/docker.service"}
+{"log": "unrelated test data"}

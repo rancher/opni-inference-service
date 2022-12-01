@@ -9,6 +9,17 @@
 kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.6.0/nvidia-device-plugin.yml
 ```
 
+## Testing
+Install pytest and pytest-cov:
+```
+pip install pytest pytest-cov
+```
+
+Run pytest with coverage report on the src dir `opnilog`
+```
+pytest --cov opnilog
+```
+
 ## Contributing
 We use `pre-commit` for formatting auto-linting and checking import. Please refer to [installation](https://pre-commit.com/#installation) to install the pre-commit or run `pip install pre-commit`. Then you can activate it for this repo. Once it's activated, it will lint and format the code when you make a git commit. It makes changes in place. If the code is modified during the reformatting, it needs to be staged manually.
 
