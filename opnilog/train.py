@@ -23,7 +23,6 @@ def load_text(training_file, duplicate=1):
                 logging.error(e)
 
     texts = texts * duplicate
-    print(texts)
     return texts
 
 
