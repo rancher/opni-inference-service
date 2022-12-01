@@ -303,15 +303,14 @@ class MaskedDataset(Dataset):
         This function aims to address the case the data is very imbalanced, and make the data less imbalanced.
         """
         unique_sample_counter = defaultdict(int)
-        str_data = [str(l) for l in self.data]
-        for s in str_data:
-            unique_sample_counter[s] += 1
+        for s in self.data:
+            unique_sample_counter[str(s)] += 1
 
         for key in unique_sample_counter:
             count = unique_sample_counter[key]
             unique_sample_counter[key] = np.sqrt(count) / count  # the sqrt weight
 
-        weights = np.array([unique_sample_counter[s] for s in str_data])
+        weights = np.array([unique_sample_counter[str(s)] for s in self.data])
         return weights
 
     @staticmethod
