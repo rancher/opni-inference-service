@@ -9,6 +9,7 @@ import pandas as pd
 import requests
 import torch
 import torch.nn as nn
+from const import THRESHOLD
 from opnilog_model import *  # should improve this
 from opnilog_tokenizer import LogTokenizer
 from torchvision import transforms
@@ -129,7 +130,7 @@ class LogParser:
             # model.load_state_dict(torch.load(self.model_path))
             prev_epoch, prev_loss = self.load_model(model, model_opt)
 
-        train_dataloader = self.get_train_dataloaders(
+        train_dataloader, eval_dataloader = self.get_train_eval_dataloaders(
             data_tokenized, transform_to_tensor
         )
         ## train if no model
@@ -149,12 +150,24 @@ class LogParser:
             "percentageCompleted": 100,
             "timeTraining": int(end_time - training_start_time),
             "remainingTime": 0,
+            "epoch": 3,
         }
         result = requests.post(
             MODEL_STATS_ENDPOINT, data=json.dumps(model_training_stats).encode()
         )
 
         self.save_model(model=model, model_opt=model_opt, epoch=self.nr_epochs, loss=0)
+
+        self.init_inference()
+        eval_predictions = self.predict(eval_dataloader, False)
+        num_predictions = len(eval_predictions)
+        num_normal = 0
+        for pred in eval_predictions:
+            if pred >= THRESHOLD:
+                num_normal += 1
+        logging.info(
+            f"Model finished training predicting {num_normal} logs correctly out of {num_predictions} total logs for an accuracy of {num_normal/num_predictions} on eval dataset."
+        )
 
     def init_inference(
         self,
@@ -210,10 +223,13 @@ class LogParser:
         self.load_model(self.model, self.model_opt)
         self.model.eval()
 
-    def predict(self, data_tokenized, output_prefix=""):
-        test_dataloader = self.get_test_dataloaders(
-            data_tokenized, self.transform_to_tensor
-        )
+    def predict(self, data_tokenized, is_array=True, output_prefix=""):
+        if is_array:
+            test_dataloader = self.get_test_dataloaders(
+                data_tokenized, self.transform_to_tensor
+            )
+        else:
+            test_dataloader = data_tokenized
 
         results = self.run_test(
             test_dataloader,
@@ -243,7 +259,9 @@ class LogParser:
 
         return anomaly_preds
 
-    def get_train_dataloaders(self, data_tokenized, transform_to_tensor):
+    def get_train_eval_dataloaders(
+        self, data_tokenized, transform_to_tensor, training_eval_split=0.9
+    ):
         train_data = MaskedDataset(
             data_tokenized,
             self.tokenizer,
@@ -253,16 +271,23 @@ class LogParser:
         )
         weights = train_data.get_sample_weights()
         if self.num_samples != 0:
-            train_sampler = WeightedRandomSampler(
+            all_data_sampler = WeightedRandomSampler(
                 weights=list(weights), num_samples=self.num_samples, replacement=True
             )
         if self.num_samples == 0:
-            train_sampler = RandomSampler(train_data)
+            all_data_sampler = RandomSampler(train_data)
+        all_data_sampler_list = list(all_data_sampler)
+        train_eval_index = int(training_eval_split * len(all_data_sampler_list))
+        train_sampler = all_data_sampler_list[:train_eval_index]
+        eval_sampler = all_data_sampler_list[train_eval_index:]
 
         train_dataloader = DataLoader(
             train_data, sampler=train_sampler, batch_size=self.batch_size
         )
-        return train_dataloader
+        eval_dataloader = DataLoader(
+            train_data, sampler=eval_sampler, batch_size=self.batch_size
+        )
+        return train_dataloader, eval_dataloader
 
     def get_test_dataloaders(self, data_tokenized, transform_to_tensor):
         test_data = MaskedDataset(
@@ -393,7 +418,7 @@ class LogParser:
                     "percentageCompleted": int(100 * training_progress),
                     "timeTraining": int(total_time_taken),
                     "remainingTime": int(remaining_time),
-                    "currentEpoch": epoch,
+                    "currentEpoch": epoch + 1,
                 }
                 result = requests.post(
                     MODEL_STATS_ENDPOINT, data=json.dumps(model_training_stats).encode()
