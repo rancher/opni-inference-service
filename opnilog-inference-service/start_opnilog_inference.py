@@ -106,7 +106,6 @@ async def infer_logs(logs_queue):
     else:
         opnilog_predictor.download_from_s3()
         opnilog_predictor.load()
-
     max_payload_size = 128 if (IS_PRETRAINED_SERVICE) else 512
     last_time = time.time()
     pending_list = []

@@ -32,6 +32,7 @@ logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__file__)
 logger.setLevel(LOGGING_LEVEL)
 masker = LogMasker()
+ANOMALY_KEYWORDS = ["fail", "error", "fatal"]
 
 es_instance = AsyncElasticsearch(
     [ES_ENDPOINT],
@@ -103,6 +104,7 @@ async def train_opnilog_model(nw, s3_client, query):
     If during this process, there is any exception, it will return False indicating that a new OpniLog model failed to
     train. Otherwise, it will return True.
     """
+    train_test_split = 0.9
     nr_epochs = 3
     num_samples = 0
     parser = LogParser()
@@ -112,6 +114,7 @@ async def train_opnilog_model(nw, s3_client, query):
     # Load the training data.
     try:
         texts = await get_all_training_data(query)
+        num_samples = min(len(texts), 64000)
     except Exception as e:
         logging.error(f"Unable to load data. {e}")
         return False
