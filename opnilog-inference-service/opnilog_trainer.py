@@ -90,7 +90,7 @@ async def train_opnilog_model(nw, s3_client, query):
     # Load the training data.
     try:
         texts = await get_all_training_data(query)
-        num_samples = min(len(texts), 64000)
+        num_samples = min(len(texts), 128000)
     except Exception as e:
         logging.error(f"Unable to load data. {e}")
         return False

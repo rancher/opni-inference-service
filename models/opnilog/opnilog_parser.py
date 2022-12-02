@@ -12,6 +12,7 @@ import torch.nn as nn
 from const import THRESHOLD
 from opnilog_model import *  # should improve this
 from opnilog_tokenizer import LogTokenizer
+from sklearn.metrics import classification_report, confusion_matrix
 from torchvision import transforms
 
 # constant
@@ -23,6 +24,10 @@ if not using_GPU:
 else:
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(message)s")
+
+
+def post_model_stats(model_stats):
+    result = requests.post(MODEL_STATS_ENDPOINT, json.dumps(model_stats).encode())
 
 
 class LogParser:
@@ -73,6 +78,32 @@ class LogParser:
         except:  ## TODO: remove this try except when we use the new save function.
             logging.warning("loading trained model with old format.")
             model.load_state_dict(ckpt)
+
+    def eval_benchmark(self):
+        benchmark_df = pd.read_csv("boutique_logs_1.csv")
+        actual_levels = []
+        log_messages = benchmark_df["masked_log"].values
+        predicted_levels = []
+        for idx, row in benchmark_df.iterrows():
+            if row["anomaly_level"] == "Anomaly":
+                actual_levels.append(1)
+            else:
+                actual_levels.append(0)
+        for message in log_messages:
+            tokenized_message = self.tokenize_data([message], isTrain=False)
+            if len(tokenized_message[0]) < 1:
+                predicted_levels.append(0)
+            else:
+                pred = (self.predict(tokenized_message))[0]
+                if pred < THRESHOLD:
+                    predicted_levels.append(1)
+                else:
+                    predicted_levels.append(0)
+        cm = confusion_matrix(actual_levels, predicted_levels)
+        logging.info("Confusion Matrix")
+        logging.info(cm)
+        logging.info("Classification Report")
+        logging.info(classification_report(actual_levels, predicted_levels))
 
     def train(
         self,
@@ -150,11 +181,9 @@ class LogParser:
             "percentageCompleted": 100,
             "timeTraining": int(end_time - training_start_time),
             "remainingTime": 0,
-            "epoch": 3,
+            "currentEpoch": 3,
         }
-        result = requests.post(
-            MODEL_STATS_ENDPOINT, data=json.dumps(model_training_stats).encode()
-        )
+        post_model_stats(model_training_stats)
 
         self.save_model(model=model, model_opt=model_opt, epoch=self.nr_epochs, loss=0)
 
@@ -168,6 +197,7 @@ class LogParser:
         logging.info(
             f"Model finished training predicting {num_normal} logs correctly out of {num_predictions} total logs for an accuracy of {num_normal/num_predictions} on eval dataset."
         )
+        self.eval_benchmark()
 
     def init_inference(
         self,
@@ -420,9 +450,7 @@ class LogParser:
                     "remainingTime": int(remaining_time),
                     "currentEpoch": epoch + 1,
                 }
-                result = requests.post(
-                    MODEL_STATS_ENDPOINT, data=json.dumps(model_training_stats).encode()
-                )
+                post_model_stats(model_training_stats)
                 start = time.time()
                 tokens = 0
         return total_loss / total_tokens
