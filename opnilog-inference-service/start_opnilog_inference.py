@@ -231,9 +231,6 @@ if __name__ == "__main__":
 
     task = loop.create_task(init_nats())
     loop.run_until_complete(task)
-    logging.info(f"IS_GPU_SERVICE: {IS_GPU_SERVICE}")
-    logging.info(IS_CONTROL_PLANE_SERVICE)
-    logging.info(IS_RANCHER_SERVICE)
 
     if IS_PRETRAINED_SERVICE:
         init_model_task = loop.create_task(get_pretrain_model())
