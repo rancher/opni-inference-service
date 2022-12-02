@@ -80,7 +80,7 @@ class LogParser:
             model.load_state_dict(ckpt)
 
     def eval_benchmark(self):
-        benchmark_df = pd.read_csv("boutique_logs_1.csv")
+        benchmark_df = pd.read_csv("boutique_logs.csv")
         actual_levels = []
         log_messages = benchmark_df["masked_log"].values
         predicted_levels = []
