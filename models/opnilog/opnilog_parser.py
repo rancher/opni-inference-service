@@ -23,6 +23,12 @@ else:
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(message)s")
 
 
+def post_model_stats(model_training_stats):
+    result = requests.post(
+        MODEL_STATS_ENDPOINT, data=json.dumps(model_training_stats).encode()
+    )
+
+
 class LogParser:
     def __init__(
         self,
@@ -148,10 +154,9 @@ class LogParser:
             "percentageCompleted": 100,
             "timeTraining": int(end_time - training_start_time),
             "remainingTime": 0,
+            "currentEpoch": 3,
         }
-        result = requests.post(
-            MODEL_STATS_ENDPOINT, data=json.dumps(model_training_stats).encode()
-        )
+        post_model_stats(model_training_stats)
 
         self.save_model(model=model, model_opt=model_opt, epoch=self.nr_epochs, loss=0)
 
@@ -394,9 +399,7 @@ class LogParser:
                     "remainingTime": int(remaining_time),
                     "currentEpoch": epoch,
                 }
-                result = requests.post(
-                    MODEL_STATS_ENDPOINT, data=json.dumps(model_training_stats).encode()
-                )
+                post_model_stats(model_training_stats)
                 start = time.time()
                 tokens = 0
         return total_loss / total_tokens
