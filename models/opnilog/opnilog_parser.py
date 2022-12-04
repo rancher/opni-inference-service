@@ -80,10 +80,11 @@ class LogParser:
             model.load_state_dict(ckpt)
 
     def eval_benchmark(self):
-        benchmark_df = pd.read_csv("boutique_logs.csv")
+        benchmark_df = pd.read_csv("boutique_logs_10000000.csv")
         actual_levels = []
         log_messages = benchmark_df["masked_log"].values
         predicted_levels = []
+        confidence_levels = []
         for idx, row in benchmark_df.iterrows():
             if row["anomaly_level"] == "Anomaly":
                 actual_levels.append(1)
@@ -93,8 +94,10 @@ class LogParser:
             tokenized_message = self.tokenize_data([message], isTrain=False)
             if len(tokenized_message[0]) < 1:
                 predicted_levels.append(0)
+                confidence_levels.append(1)
             else:
                 pred = (self.predict(tokenized_message))[0]
+                confidence_levels.append(pred)
                 if pred < THRESHOLD:
                     predicted_levels.append(1)
                 else:
@@ -104,6 +107,14 @@ class LogParser:
         logging.info(cm)
         logging.info("Classification Report")
         logging.info(classification_report(actual_levels, predicted_levels))
+        mismatched_confidence_levels = []
+        for idx in range(0, len(predicted_levels)):
+            if predicted_levels[idx] != actual_levels[idx]:
+                mismatched_confidence_levels.append(confidence_levels[idx])
+        mismatched_confidence_levels.sort()
+        logging.info(f"Mix confidence level is {min(mismatched_confidence_levels)}")
+        logging.info(f"Max confidence level is {max(mismatched_confidence_levels)}")
+        logging.info(mismatched_confidence_levels)
 
     def train(
         self,
