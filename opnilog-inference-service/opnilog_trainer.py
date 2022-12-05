@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import shutil
+import time
 
 # Third Party
 import boto3
@@ -25,6 +26,7 @@ from elasticsearch import AsyncElasticsearch
 from masker import LogMasker
 from opni_nats import NatsWrapper
 from opnilog_parser import LogParser
+from utils import post_model_stats
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__file__)
@@ -47,6 +49,11 @@ async def get_all_training_data(payload):
     query = payload["payload"]["query"]
     max_size = payload["payload"]["max_size"]
     first_iteration = True
+    num_logs_fetched = min(
+        (await es_instance.count(index="logs", body=query))["count"], max_size
+    )
+    fetch_start_time = time.time()
+    fetching_progress = 0.0
     while True:
         if first_iteration:
             current_page = await es_instance.search(
@@ -56,14 +63,38 @@ async def get_all_training_data(payload):
         else:
             current_page = await es_instance.scroll(scroll_id=scroll_id, scroll="1m")
         results_hits = current_page["hits"]["hits"]
-        if len(results_hits) > 0:
+        results_hits_length = len(results_hits)
+        if results_hits_length > 0:
             scroll_id = current_page["_scroll_id"]
             for each_hit in results_hits:
                 all_training_data.append(masker.mask(each_hit["_source"]["log"]))
-                if len(all_training_data) == max_size:
+                if len(all_training_data) == num_logs_fetched:
+                    total_time_taken = time.time() - fetch_start_time
+                    post_model_stats(
+                        stage="fetch",
+                        percentageCompleted=100,
+                        timeTraining=total_time_taken,
+                        remainingTime=0,
+                    )
                     return all_training_data
         else:
+            total_time_taken = time.time() - fetch_start_time
+            post_model_stats(
+                stage="fetch",
+                percentageCompleted=100,
+                timeTraining=total_time_taken,
+                remainingTime=0,
+            )
             return all_training_data
+        fetching_progress = len(all_training_data) / num_logs_fetched
+        total_time_taken = time.time() - fetch_start_time
+        remaining_time = (total_time_taken // fetching_progress) - total_time_taken
+        post_model_stats(
+            stage="fetch",
+            percentageCompleted=int(100 * fetching_progress),
+            timeTraining=int(total_time_taken),
+            remainingTime=int(remaining_time),
+        )
 
 
 async def train_opnilog_model(nw, s3_client, query):
