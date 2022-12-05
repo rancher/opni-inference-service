@@ -147,7 +147,7 @@ class LogParser:
         post_model_stats(
             stage="train",
             percentageCompleted=100,
-            timeTraining=int(end_time - training_start_time),
+            timeElapsed=int(end_time - training_start_time),
             remainingTime=0,
             currentEpoch=3,
         )
@@ -390,7 +390,7 @@ class LogParser:
                 post_model_stats(
                     stage="train",
                     percentageCompleted=int(100 * training_progress),
-                    timeTraining=int(total_time_taken),
+                    timeElapsed=int(total_time_taken),
                     remainingTime=int(remaining_time),
                     currentEpoch=epoch,
                 )
