@@ -1,16 +1,15 @@
 # Standard Library
-import json
 import logging
 import os
 import time
 
 # Third Party
-import requests
 import torch
 import torch.nn as nn
 from opnilog_model import *  # should improve this
 from opnilog_tokenizer import LogTokenizer
 from torchvision import transforms
+from utils import post_model_stats
 
 # constant
 # tell torch using or not using GPU
@@ -22,12 +21,6 @@ else:
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 # class logparser
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(message)s")
-
-
-def post_model_stats(model_training_stats):
-    result = requests.post(
-        MODEL_STATS_ENDPOINT, data=json.dumps(model_training_stats).encode()
-    )
 
 
 class LogParser:
@@ -151,13 +144,13 @@ class LogParser:
                 training_start_time=training_start_time,
             )
         end_time = time.time()
-        model_training_stats = {
-            "percentageCompleted": 100,
-            "timeTraining": int(end_time - training_start_time),
-            "remainingTime": 0,
-            "currentEpoch": 3,
-        }
-        post_model_stats(model_training_stats)
+        post_model_stats(
+            stage="train",
+            percentageCompleted=100,
+            timeTraining=int(end_time - training_start_time),
+            remainingTime=0,
+            currentEpoch=3,
+        )
 
         self.save_model(model=model, model_opt=model_opt, epoch=self.nr_epochs, loss=0)
 
@@ -393,13 +386,13 @@ class LogParser:
                 logging.info(
                     f"| Epoch: {epoch} | Total Progress: {(training_progress * 100):.2f}% | Training Time Taken: {total_time_taken:.2f}s | ETC: {(remaining_time):.2f}s | Epoch Step: {i}/{len(dataloader)} | Loss: {(loss / batch.ntokens):.4f} | Tokens per Sec: {(tokens / elapsed):.2f} |"
                 )
-                model_training_stats = {
-                    "percentageCompleted": int(100 * training_progress),
-                    "timeTraining": int(total_time_taken),
-                    "remainingTime": int(remaining_time),
-                    "currentEpoch": epoch,
-                }
-                post_model_stats(model_training_stats)
+                post_model_stats(
+                    stage="train",
+                    percentageCompleted=int(100 * training_progress),
+                    timeTraining=int(total_time_taken),
+                    remainingTime=int(remaining_time),
+                    currentEpoch=epoch,
+                )
                 start = time.time()
                 tokens = 0
         return total_loss / total_tokens
