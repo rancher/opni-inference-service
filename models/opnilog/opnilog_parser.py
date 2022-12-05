@@ -416,7 +416,7 @@ class LogParser:
                     percentageCompleted=int(100 * training_progress),
                     timeElapsed=int(total_time_taken),
                     remainingTime=int(remaining_time),
-                    currentEpoch=epoch,
+                    currentEpoch=epoch + 1,
                 )
                 start = time.time()
                 tokens = 0
