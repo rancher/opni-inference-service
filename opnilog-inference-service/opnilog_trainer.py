@@ -73,7 +73,7 @@ async def get_all_training_data(payload):
                     post_model_stats(
                         stage="fetch",
                         percentageCompleted=100,
-                        timeTraining=total_time_taken,
+                        timeElapsed=total_time_taken,
                         remainingTime=0,
                     )
                     return all_training_data
@@ -82,7 +82,7 @@ async def get_all_training_data(payload):
             post_model_stats(
                 stage="fetch",
                 percentageCompleted=100,
-                timeTraining=total_time_taken,
+                timeElapsed=total_time_taken,
                 remainingTime=0,
             )
             return all_training_data
@@ -92,7 +92,7 @@ async def get_all_training_data(payload):
         post_model_stats(
             stage="fetch",
             percentageCompleted=int(100 * fetching_progress),
-            timeTraining=int(total_time_taken),
+            timeElapsed=int(total_time_taken),
             remainingTime=int(remaining_time),
         )
 

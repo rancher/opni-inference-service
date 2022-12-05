@@ -33,11 +33,11 @@ logger.setLevel(LOGGING_LEVEL)
 
 
 def post_model_stats(
-    stage, percentageCompleted=0, timeTraining=0, remainingTime=0, currentEpoch=0
+    stage, percentageCompleted=0, timeElapsed=0, remainingTime=0, currentEpoch=0
 ):
     model_training_stats = {
         "percentageCompleted": percentageCompleted,
-        "timeTraining": timeTraining,
+        "timeElapsed": timeElapsed,
         "remainingTime": remainingTime,
         "currentEpoch": currentEpoch,
         "stage": stage,
