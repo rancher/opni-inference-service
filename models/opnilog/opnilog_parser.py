@@ -16,7 +16,6 @@ from utils import put_model_stats
 # constant
 # tell torch using or not using GPU
 using_GPU = True if torch.cuda.device_count() > 0 else False
-MODEL_STATS_ENDPOINT = "http://opni-internal:11080/ModelTraining/model/statistics"
 if not using_GPU:
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
 else:
