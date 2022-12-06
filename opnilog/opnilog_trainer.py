@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import shutil
+import time
 
 # Third Party
 import boto3
@@ -11,6 +12,9 @@ import botocore
 from botocore.client import Config
 from const import (
     DEFAULT_MODEL_NAME,
+    ES_ENDPOINT,
+    ES_PASSWORD,
+    ES_USERNAME,
     LOGGING_LEVEL,
     S3_ACCESS_KEY,
     S3_BUCKET,
@@ -18,35 +22,122 @@ from const import (
     S3_SECRET_KEY,
     TRAINING_DATA_PATH,
 )
+from elasticsearch import AsyncElasticsearch
+from models.opnilog.masker import LogMasker
 from models.opnilog.opnilog_parser import LogParser
 from opni_nats import NatsWrapper
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__file__)
 logger.setLevel(LOGGING_LEVEL)
+masker = LogMasker()
+ANOMALY_KEYWORDS = ["fail", "error", "fatal"]
+
+es_instance = AsyncElasticsearch(
+    [ES_ENDPOINT],
+    port=9200,
+    http_compress=True,
+    http_auth=(ES_USERNAME, ES_PASSWORD),
+    verify_certs=False,
+    use_ssl=True,
+)
 
 
-def train_opnilog_model(s3_client, windows_folder_path):
+async def get_all_training_data(payload):
+    all_training_data = []
+    scroll_id = ""
+    query = payload["payload"]["query"]
+    max_size = payload["payload"]["max_size"]
+    first_iteration = True
+    num_logs_fetched = min(
+        (await es_instance.count(index="logs", body=query))["count"], max_size
+    )
+    fetch_start_time = time.time()
+    while True:
+        if first_iteration:
+            current_page = await es_instance.search(
+                index="logs", body=query, scroll="1m", size=10000
+            )
+            first_iteration = False
+        else:
+            current_page = await es_instance.scroll(scroll_id=scroll_id, scroll="1m")
+        results_hits = current_page["hits"]["hits"]
+        results_hits_length = len(results_hits)
+        if results_hits_length > 0:
+            scroll_id = current_page["_scroll_id"]
+            for each_hit in results_hits:
+                all_training_data.append(masker.mask(each_hit["_source"]["log"]))
+                if len(all_training_data) == num_logs_fetched:
+                    """
+                    total_time_taken = time.time() - fetch_start_time
+                    put_model_stats(
+                        stage="fetch",
+                        percentageCompleted=100,
+                        timeElapsed=total_time_taken,
+                        remainingTime=0,
+                    )
+                    """
+                    return all_training_data
+        else:
+            """
+            total_time_taken = time.time() - fetch_start_time
+            put_model_stats(
+                stage="fetch",
+                percentageCompleted=100,
+                timeElapsed=total_time_taken,
+                remainingTime=0,
+            )
+            """
+            return all_training_data
+        """
+        fetching_progress = len(all_training_data) / num_logs_fetched
+        total_time_taken = time.time() - fetch_start_time
+        remaining_time = (total_time_taken // fetching_progress) - total_time_taken
+        post_model_stats(
+            stage="fetch",
+            percentageCompleted=int(100 * fetching_progress),
+            timeElapsed=int(total_time_taken),
+            remainingTime=int(remaining_time),
+        )
+        """
+
+
+async def train_opnilog_model(nw, s3_client, query):
     """
     This function will be used to load the training data and then train the new OpniLog model.
     If during this process, there is any exception, it will return False indicating that a new OpniLog model failed to
     train. Otherwise, it will return True.
     """
+    train_test_split = 0.9
     nr_epochs = 3
     num_samples = 0
     parser = LogParser()
+    await nw.connect()
+    model_training_payload = {"status": "training"}
+    await nw.publish("model_update", json.dumps(model_training_payload).encode())
     # Load the training data.
     try:
-        texts = parser.load_data(windows_folder_path)
+        texts = await get_all_training_data(query)
+        num_samples = min(len(texts), 64000)
     except Exception as e:
-        logging.error("Unable to load data.")
+        logging.error(f"Unable to load data. {e}")
         return False
+    try:
+        if not os.path.exists("output/"):
+            os.makedirs("output")
+    except Exception as e:
+        logging.error("Unable to create output folder.")
     # Check to see if the length of the training data is at least 1. Otherwise, return False.
     if len(texts) > 0:
         try:
             tokenized = parser.tokenize_data(texts, isTrain=True)
             parser.tokenizer.save_vocab()
-            parser.train(tokenized, nr_epochs=nr_epochs, num_samples=num_samples)
+            parser.train(
+                tokenized,
+                nr_epochs=nr_epochs,
+                num_samples=num_samples,
+                put_results=True,
+            )
             all_files = os.listdir("output/")
             if DEFAULT_MODEL_NAME in all_files and "vocab.txt" in all_files:
                 logger.debug("Completed training model")
@@ -65,7 +156,7 @@ def train_opnilog_model(s3_client, windows_folder_path):
                 )
                 return False
         except Exception as e:
-            logger.error("OpniLog model was not able to be trained.")
+            logger.error(f"OpniLog model was not able to be trained. {e}")
             return False
     else:
         logger.error(
@@ -90,12 +181,12 @@ def s3_setup(s3_client):
 
 
 async def send_signal_to_nats(nw, training_success):
-    # Function that will send signal to Nats subjects gpu_trainingjob_status and model_ready.
+    # Function that will send signal to Nats subjects gpu_trainingjob_status and model_update.
     await nw.connect()
     # Regardless of a successful training of OpniLog model, send JobEnd message to Nats subject gpu_trainingjob_status to make GPU available again.
     await nw.publish("gpu_trainingjob_status", b"JobEnd")
 
-    # If OpniLog model has been successfully trained, send payload to model_ready Nats subject that new model is ready to be uploaded from Minio.
+    # If OpniLog model has been successfully trained, send payload to model_update Nats subject that new model is ready to be uploaded from Minio.
     logger.info(f"training status : {training_success}")
     if training_success:
         opnilog_payload = {
@@ -107,10 +198,10 @@ async def send_signal_to_nats(nw, training_success):
         }
         await nw.connect()
         await nw.publish(
-            nats_subject="model_ready", payload_df=json.dumps(opnilog_payload).encode()
+            nats_subject="model_update", payload_df=json.dumps(opnilog_payload).encode()
         )
         logger.info(
-            "Published to model_ready Nats subject that new OpniLog model is ready to be used for inferencing."
+            "Published to model_update Nats subject that new OpniLog model is ready to be used for inferencing."
         )
 
 
@@ -137,12 +228,12 @@ async def train_model(job_queue, nw):
         aws_secret_access_key=S3_SECRET_KEY,
         config=Config(signature_version="s3v4"),
     )
-    windows_folder_path = os.path.join(TRAINING_DATA_PATH, "windows")
     while True:
         new_job = await job_queue.get()  ## TODO: should the metadata being used?
+        query = json.loads(new_job)
         logger.info("kick off a model training job...")
         res_s3_setup = s3_setup(s3_client)
-        model_trained_success = train_opnilog_model(s3_client, windows_folder_path)
+        model_trained_success = await train_opnilog_model(nw, s3_client, query)
         await send_signal_to_nats(nw, model_trained_success)
 
 

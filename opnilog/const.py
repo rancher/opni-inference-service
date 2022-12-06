@@ -19,6 +19,7 @@ S3_ACCESS_KEY = os.environ["S3_ACCESS_KEY"]
 S3_SECRET_KEY = os.environ["S3_SECRET_KEY"]
 S3_ENDPOINT = os.environ["S3_ENDPOINT"]
 S3_BUCKET = os.getenv("S3_BUCKET", "opni-nulog-models")
+MODEL_STATS_ENDPOINT = "http://opni-internal:11080/ModelTraining/model/statistics"
 
 # config values and hyperparameters for opnilg
 DEFAULT_MODEL_NAME = "nulog_model_latest.pt"
@@ -70,7 +71,6 @@ params = HyperParameters()
 THRESHOLD = float(os.getenv("MODEL_THRESHOLD", params.MODEL_THRESHOLD))
 MIN_LOG_TOKENS = int(os.getenv("MIN_LOG_TOKENS", params.MIN_LOG_TOKENS))
 SERVICE_TYPE = os.getenv("SERVICE_TYPE", params.SERVICE_TYPE)
-IS_GPU_SERVICE = bool(os.getenv("IS_GPU_SERVICE", False))
 
 ## these 2 const are specifically for caching predictions
 CACHED_PREDS_SAVEFILE = (
@@ -79,7 +79,7 @@ CACHED_PREDS_SAVEFILE = (
     else "rancher-preds.txt"
     if SERVICE_TYPE == "rancher"
     else "gpu-preds.txt"
-    if IS_GPU_SERVICE
+    if SERVICE_TYPE == "gpu"
     else "cpu-preds.txt"
 )
 SAVE_FREQ = 25

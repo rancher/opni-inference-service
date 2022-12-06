@@ -12,6 +12,7 @@ from const import (
     LOGGING_LEVEL,
     MIN_LOG_TOKENS,
     S3_ACCESS_KEY,
+    S3_BUCKET,
     S3_ENDPOINT,
     S3_SECRET_KEY,
 )
@@ -26,18 +27,18 @@ class OpniLogPredictor:
     def __init__(self):
         self.is_ready = False
         self.parser = None
-
-    def download_from_s3(
-        self,
-        decoded_payload: dict = DEFAULT_MODELREADY_PAYLOAD,
-    ):
-        s3_client = boto3.resource(
+        self.s3_client = boto3.resource(
             "s3",
             endpoint_url=S3_ENDPOINT,
             aws_access_key_id=S3_ACCESS_KEY,
             aws_secret_access_key=S3_SECRET_KEY,
             config=Config(signature_version="s3v4"),
         )
+
+    def download_from_s3(
+        self,
+        decoded_payload: dict = DEFAULT_MODELREADY_PAYLOAD,
+    ):
         if not os.path.exists("output/"):
             os.makedirs("output")
 
@@ -45,7 +46,7 @@ class OpniLogPredictor:
         bucket_files = decoded_payload["bucket_files"]
         for k in bucket_files:
             try:
-                s3_client.meta.client.download_file(
+                self.s3_client.meta.client.download_file(
                     bucket_name, bucket_files[k], f"output/{bucket_files[k]}"
                 )
             except Exception as e:
@@ -65,6 +66,18 @@ class OpniLogPredictor:
             logger.info("OpniLog model gets loaded.")
         except Exception as e:
             logger.error(f"No OpniLog model currently {e}")
+
+    def reset_model(self):
+        self.parser = None
+        self.is_ready = False
+        try:
+            bucket = self.s3_client.Bucket(S3_BUCKET)
+            for obj in bucket.objects.all():
+                self.s3_client.Object(bucket.name, obj.key).delete()
+            logging.info("Removed Opnilog files from S3.")
+
+        except Exception as e:
+            logging.error(f"Unable to remove model file from S3. {e}")
 
     def predict(self, logs: List[str]):
         """
