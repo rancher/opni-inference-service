@@ -274,6 +274,7 @@ class LogParser:
                 weights=list(weights), num_samples=self.num_samples, replacement=True
             )
         if self.num_samples == 0:
+
             all_data_sampler = RandomSampler(train_data)
         all_data_sampler_list = list(all_data_sampler)
         train_eval_index = int(training_eval_split * len(all_data_sampler_list))
