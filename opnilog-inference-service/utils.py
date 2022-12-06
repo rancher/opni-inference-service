@@ -32,7 +32,7 @@ logger = logging.getLogger(__file__)
 logger.setLevel(LOGGING_LEVEL)
 
 
-def post_model_stats(
+def put_model_stats(
     stage, percentageCompleted=0, timeElapsed=0, remainingTime=0, currentEpoch=0
 ):
     model_training_stats = {
@@ -42,7 +42,7 @@ def post_model_stats(
         "currentEpoch": currentEpoch,
         "stage": stage,
     }
-    result = requests.post(
+    result = requests.put(
         MODEL_STATS_ENDPOINT, data=json.dumps(model_training_stats).encode()
     )
 

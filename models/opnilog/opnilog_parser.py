@@ -11,7 +11,7 @@ from const import THRESHOLD
 from opnilog_model import *  # should improve this
 from opnilog_tokenizer import LogTokenizer
 from torchvision import transforms
-from utils import post_model_stats
+from utils import put_model_stats
 
 # constant
 # tell torch using or not using GPU
@@ -88,6 +88,7 @@ class LogParser:
         nr_epochs=5,
         num_samples=0,
         step_size=100,
+        put_results=False,
     ):
         self.mask_percentage = mask_percentage
         self.pad_len = pad_len
@@ -143,15 +144,17 @@ class LogParser:
                 SimpleLossCompute(model.generator, criterion, model_opt),
                 epoch=epoch,
                 training_start_time=training_start_time,
+                put_results=put_results,
             )
         end_time = time.time()
-        post_model_stats(
-            stage="train",
-            percentageCompleted=100,
-            timeElapsed=int(end_time - training_start_time),
-            remainingTime=0,
-            currentEpoch=3,
-        )
+        if put_results:
+            put_model_stats(
+                stage="train",
+                percentageCompleted=100,
+                timeElapsed=int(end_time - training_start_time),
+                remainingTime=0,
+                currentEpoch=3,
+            )
 
         self.save_model(model=model, model_opt=model_opt, epoch=self.nr_epochs, loss=0)
 
@@ -371,7 +374,9 @@ class LogParser:
                 idxs.append(dg)
         return torch.stack(src), torch.stack(trg), torch.Tensor(idxs)
 
-    def run_epoch(self, dataloader, model, loss_compute, epoch, training_start_time):
+    def run_epoch(
+        self, dataloader, model, loss_compute, epoch, training_start_time, put_results
+    ):
 
         start = time.time()
         total_tokens = 0
@@ -411,13 +416,14 @@ class LogParser:
                 logging.info(
                     f"| Epoch: {epoch} | Total Progress: {(training_progress * 100):.2f}% | Training Time Taken: {total_time_taken:.2f}s | ETC: {(remaining_time):.2f}s | Epoch Step: {i}/{len(dataloader)} | Loss: {(loss / batch.ntokens):.4f} | Tokens per Sec: {(tokens / elapsed):.2f} |"
                 )
-                post_model_stats(
-                    stage="train",
-                    percentageCompleted=int(100 * training_progress),
-                    timeElapsed=int(total_time_taken),
-                    remainingTime=int(remaining_time),
-                    currentEpoch=epoch + 1,
-                )
+                if put_results:
+                    put_model_stats(
+                        stage="train",
+                        percentageCompleted=int(100 * training_progress),
+                        timeElapsed=int(total_time_taken),
+                        remainingTime=int(remaining_time),
+                        currentEpoch=epoch + 1,
+                    )
                 start = time.time()
                 tokens = 0
         return total_loss / total_tokens

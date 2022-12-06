@@ -26,7 +26,6 @@ from elasticsearch import AsyncElasticsearch
 from masker import LogMasker
 from opni_nats import NatsWrapper
 from opnilog_parser import LogParser
-from utils import post_model_stats
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__file__)
@@ -54,7 +53,6 @@ async def get_all_training_data(payload):
         (await es_instance.count(index="logs", body=query))["count"], max_size
     )
     fetch_start_time = time.time()
-    fetching_progress = 0.0
     while True:
         if first_iteration:
             current_page = await es_instance.search(
@@ -70,23 +68,28 @@ async def get_all_training_data(payload):
             for each_hit in results_hits:
                 all_training_data.append(masker.mask(each_hit["_source"]["log"]))
                 if len(all_training_data) == num_logs_fetched:
+                    """
                     total_time_taken = time.time() - fetch_start_time
-                    post_model_stats(
+                    put_model_stats(
                         stage="fetch",
                         percentageCompleted=100,
                         timeElapsed=total_time_taken,
                         remainingTime=0,
                     )
+                    """
                     return all_training_data
         else:
+            """
             total_time_taken = time.time() - fetch_start_time
-            post_model_stats(
+            put_model_stats(
                 stage="fetch",
                 percentageCompleted=100,
                 timeElapsed=total_time_taken,
                 remainingTime=0,
             )
+            """
             return all_training_data
+        """
         fetching_progress = len(all_training_data) / num_logs_fetched
         total_time_taken = time.time() - fetch_start_time
         remaining_time = (total_time_taken // fetching_progress) - total_time_taken
@@ -96,6 +99,7 @@ async def get_all_training_data(payload):
             timeElapsed=int(total_time_taken),
             remainingTime=int(remaining_time),
         )
+        """
 
 
 async def train_opnilog_model(nw, s3_client, query):
@@ -128,7 +132,12 @@ async def train_opnilog_model(nw, s3_client, query):
         try:
             tokenized = parser.tokenize_data(texts, isTrain=True)
             parser.tokenizer.save_vocab()
-            parser.train(tokenized, nr_epochs=nr_epochs, num_samples=num_samples)
+            parser.train(
+                tokenized,
+                nr_epochs=nr_epochs,
+                num_samples=num_samples,
+                put_results=True,
+            )
             all_files = os.listdir("output/")
             if DEFAULT_MODEL_NAME in all_files and "vocab.txt" in all_files:
                 logger.debug("Completed training model")

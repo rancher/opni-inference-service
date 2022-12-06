@@ -111,7 +111,6 @@ async def infer_logs(logs_queue):
     pending_list = []
     while True:
         payload = await logs_queue.get()
-        logging.info(type(payload))
         if payload is None:
             continue
         if type(payload) is dict:
@@ -131,7 +130,6 @@ async def infer_logs(logs_queue):
         if len(payload) == 1:
             pending_list.append(payload[0])
         else:
-            logging.info(payload)
             df_payload = pd.DataFrame(payload)
             await run(df_payload, max_payload_size, opnilog_predictor)
             del df_payload
