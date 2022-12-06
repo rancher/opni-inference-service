@@ -42,9 +42,12 @@ def put_model_stats(
         "currentEpoch": currentEpoch,
         "stage": stage,
     }
-    result = requests.put(
-        MODEL_STATS_ENDPOINT, data=json.dumps(model_training_stats).encode()
-    )
+    try:
+        result = requests.put(
+            MODEL_STATS_ENDPOINT, data=json.dumps(model_training_stats).encode()
+        )
+    except Exception as e:
+        logger.warning(f"Failed to post training status, error: {e}")
 
 
 def s3_setup():
