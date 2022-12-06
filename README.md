@@ -10,14 +10,15 @@ kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.6
 ```
 
 ## Testing
-Install pytest and pytest-cov:
+Install libs for testing
 ```
-pip install pytest pytest-cov
+pip install -r requirements.txt
+pip install -r test-requirements.txt
 ```
 
-Run pytest with coverage report on the src dir `opnilog`
+Run pytest with coverage report on the src dir `opni_inference_service`
 ```
-pytest --cov opnilog
+pytest --cov opni_inference_service
 ```
 
 ## Contributing

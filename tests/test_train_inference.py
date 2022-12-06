@@ -3,7 +3,7 @@ import json
 import os
 
 # Local
-from opnilog import inference, train
+from opni_inference_service import inference, train
 
 
 def test_load_text():
@@ -15,7 +15,7 @@ def test_load_text():
     ]
 
 
-def test_train_opnilog_model():
+def test_train_opnilog_model(mocker):
     train.train_opnilog_model("tests/test-data/training.txt", duplicate=10)
     assert os.path.exists("output/opnilog_model_latest.pt")
     assert os.path.exists("output/vocab.txt")
