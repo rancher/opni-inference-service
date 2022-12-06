@@ -4,6 +4,7 @@ import os
 import time
 
 # Third Party
+import pandas as pd
 import torch
 import torch.nn as nn
 from opnilog_model import *  # should improve this
@@ -17,7 +18,6 @@ if not using_GPU:
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
 else:
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-# class logparser
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(message)s")
 
 
@@ -244,6 +244,7 @@ class LogParser:
             )
         if self.num_samples == 0:
             train_sampler = RandomSampler(train_data)
+
         train_dataloader = DataLoader(
             train_data, sampler=train_sampler, batch_size=self.batch_size
         )

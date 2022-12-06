@@ -6,11 +6,9 @@ from collections import defaultdict
 
 # Third Party
 import numpy as np
-import pandas as pd
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from sklearn.preprocessing import minmax_scale
 from torch.autograd import Variable
 from torch.utils.data import (
     DataLoader,
@@ -301,28 +299,18 @@ class MaskedDataset(Dataset):
         self.tokenizer = tokenizer
 
     def get_sample_weights(self):
-        def changeTokenToCount(token, dictInfo):
-            if token == 0:
-                return 0
-            else:
-                return dictInfo[token]
+        """
+        This function aims to address the case the data is very imbalanced, and make the data less imbalanced.
+        """
+        unique_sample_counter = defaultdict(int)
+        for s in self.data:
+            unique_sample_counter[str(s)] += 1
 
-        d = self.c(self.padded_data)
-        data_token_idx_df = pd.DataFrame(d)
-        storeColumnInfo = defaultdict(dict)
-        cnt = 0
-        for column in range(self.pad_len):
-            val_cnt = pd.value_counts(data_token_idx_df.iloc[:, column])
-            storeColumnInfo[column] = val_cnt.to_dict()
-            data_token_idx_df.iloc[:, column] = data_token_idx_df.iloc[:, column].apply(
-                lambda x: changeTokenToCount(x, storeColumnInfo[column])
-            )
-        #         weights = minmax_scale(np.divide(np.ones(data_token_idx_df.shape[0]),
-        #                                          data_token_idx_df.sum(axis=1)),
-        #                                feature_range=(0.005, 0.995))
-        weights = 1 - minmax_scale(
-            data_token_idx_df.sum(axis=1), feature_range=(0.0, 0.75)
-        )
+        for key in unique_sample_counter:
+            count = unique_sample_counter[key]
+            unique_sample_counter[key] = np.sqrt(count) / count  # the sqrt weight
+
+        weights = np.array([unique_sample_counter[str(s)] for s in self.data])
         return weights
 
     @staticmethod
