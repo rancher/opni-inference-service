@@ -26,6 +26,7 @@ from elasticsearch import AsyncElasticsearch
 from masker import LogMasker
 from opni_nats import NatsWrapper
 from opnilog_parser import LogParser
+from utils import put_model_stats
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__file__)
@@ -44,6 +45,9 @@ es_instance = AsyncElasticsearch(
 
 
 async def get_all_training_data(payload):
+    put_model_stats(
+        stage="train", percentageCompleted=0, timeElapsed=0, remainingTime=0
+    )
     all_training_data = []
     scroll_id = ""
     query = payload["payload"]["query"]
