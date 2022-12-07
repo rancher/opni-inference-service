@@ -19,17 +19,10 @@ from const import (
     SAVE_FREQ,
 )
 
-s3_client = boto3.resource(
-    "s3",
-    endpoint_url=S3_ENDPOINT,
-    aws_access_key_id=S3_ACCESS_KEY,
-    aws_secret_access_key=S3_SECRET_KEY,
-    config=Config(signature_version="s3v4"),
-)
-
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__file__)
 logger.setLevel(LOGGING_LEVEL)
+s3_client = None
 
 
 def put_model_stats(
@@ -52,6 +45,13 @@ def put_model_stats(
 
 def s3_setup():
     # Function to set up a S3 bucket if it does not already exist.
+    s3_client = boto3.resource(
+        "s3",
+        endpoint_url=S3_ENDPOINT,
+        aws_access_key_id=S3_ACCESS_KEY,
+        aws_secret_access_key=S3_SECRET_KEY,
+        config=Config(signature_version="s3v4"),
+    )
     try:
         s3_client.meta.client.head_bucket(Bucket=S3_BUCKET)
         logger.debug(f"{S3_BUCKET} bucket exists")
