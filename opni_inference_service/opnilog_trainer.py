@@ -8,14 +8,12 @@ import shutil
 # Third Party
 from const import (
     DEFAULT_MODEL_NAME,
+    DEFAULT_VOCAB_NAME,
     ES_ENDPOINT,
     ES_PASSWORD,
     ES_USERNAME,
     LOGGING_LEVEL,
-    S3_ACCESS_KEY,
     S3_BUCKET,
-    S3_ENDPOINT,
-    S3_SECRET_KEY,
     TRAINING_DATA_PATH,
 )
 from elasticsearch import AsyncElasticsearch
@@ -29,6 +27,7 @@ logger = logging.getLogger(__file__)
 logger.setLevel(LOGGING_LEVEL)
 masker = LogMasker()
 ANOMALY_KEYWORDS = ["fail", "error", "fatal"]
+MAX_TRAINING_SAMPLE_SIZE = 64000
 
 es_instance = AsyncElasticsearch(
     [ES_ENDPOINT],
@@ -41,32 +40,27 @@ es_instance = AsyncElasticsearch(
 
 
 async def get_all_training_data(payload):
-    all_training_data = []
-    scroll_id = ""
+    """
+    get training data from Opensearch and mask them.
+    """
+    res_data = []
     query = payload["payload"]["query"]
     max_size = payload["payload"]["max_size"]
-    first_iteration = True
     num_logs_fetched = min(
         (await es_instance.count(index="logs", body=query))["count"], max_size
     )
-    while True:
-        if first_iteration:
-            current_page = await es_instance.search(
-                index="logs", body=query, scroll="1m", size=10000
-            )
-            first_iteration = False
-        else:
-            current_page = await es_instance.scroll(scroll_id=scroll_id, scroll="1m")
-        results_hits = current_page["hits"]["hits"]
-        results_hits_length = len(results_hits)
-        if results_hits_length > 0:
-            scroll_id = current_page["_scroll_id"]
-            for each_hit in results_hits:
-                all_training_data.append(masker.mask(each_hit["_source"]["log"]))
-                if len(all_training_data) == num_logs_fetched:
-                    return all_training_data
-        else:
-            return all_training_data
+    current_page = await es_instance.search(
+        index="logs", body=query, scroll="1m", size=10000
+    )
+    while len(current_hit := current_page["hits"]["hits"]) > 0:
+        for h in current_hit:
+            res_data.append(masker.mask(h["_source"]["log"]))
+            if len(res_data) >= num_logs_fetched:
+                return res_data
+        current_page = await es_instance.scroll(
+            scroll_id=current_page["_scroll_id"], scroll="1m"
+        )
+    return res_data
 
 
 async def train_opnilog_model(nw, s3_client, query):
@@ -75,25 +69,28 @@ async def train_opnilog_model(nw, s3_client, query):
     If during this process, there is any exception, it will return False indicating that a new OpniLog model failed to
     train. Otherwise, it will return True.
     """
-    train_test_split = 0.9
-    nr_epochs = 3
-    num_samples = 0
-    parser = LogParser()
+    save_path = "output/"
+    parser = LogParser(save_path=save_path)
     await nw.connect()
-    model_training_payload = {"status": "training"}
-    await nw.publish("model_update", json.dumps(model_training_payload).encode())
+    await nw.publish("model_update", json.dumps({"status": "training"}).encode())
     # Load the training data.
     try:
         texts = await get_all_training_data(query)
-        num_samples = min(len(texts), 64000)
     except Exception as e:
         logging.error(f"Unable to load data. {e}")
         return False
-    try:
-        if not os.path.exists("output/"):
-            os.makedirs("output")
-    except Exception as e:
-        logging.error("Unable to create output folder.")
+
+    # try:
+    #     if not os.path.exists("output/"):
+    #         os.makedirs("output")
+    # except Exception as e:
+    #     logging.error("Unable to create output folder.")
+
+    nr_epochs = 3
+    # undersample if there are too many data, otherwise randomsample
+    num_samples = (
+        MAX_TRAINING_SAMPLE_SIZE if len(texts) > MAX_TRAINING_SAMPLE_SIZE else 0
+    )
     # Check to see if the length of the training data is at least 1. Otherwise, return False.
     if len(texts) > 0:
         try:
@@ -105,17 +102,21 @@ async def train_opnilog_model(nw, s3_client, query):
                 num_samples=num_samples,
                 put_results=True,
             )
-            all_files = os.listdir("output/")
-            if DEFAULT_MODEL_NAME in all_files and "vocab.txt" in all_files:
+            all_files = os.listdir(save_path)
+            if DEFAULT_MODEL_NAME in all_files and DEFAULT_VOCAB_NAME in all_files:
                 logger.debug("Completed training model")
                 s3_client.meta.client.upload_file(
-                    "output/" + DEFAULT_MODEL_NAME, S3_BUCKET, DEFAULT_MODEL_NAME
+                    os.path.join(save_path, DEFAULT_MODEL_NAME),
+                    S3_BUCKET,
+                    DEFAULT_MODEL_NAME,
                 )
                 s3_client.meta.client.upload_file(
-                    "output/vocab.txt", S3_BUCKET, "vocab.txt"
+                    os.path.join(save_path, DEFAULT_VOCAB_NAME),
+                    S3_BUCKET,
+                    DEFAULT_VOCAB_NAME,
                 )
                 logger.info("OpniLog model and vocab have been uploaded to S3.")
-                shutil.rmtree("output/")
+                shutil.rmtree(save_path)
                 return True
             else:
                 logger.error(
