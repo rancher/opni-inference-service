@@ -1,7 +1,6 @@
 # Standard Library
 import json
 import logging
-import os
 
 # Third Party
 import boto3
@@ -22,7 +21,6 @@ from const import (
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__file__)
 logger.setLevel(LOGGING_LEVEL)
-s3_client = None
 
 
 def put_model_stats(
@@ -43,15 +41,19 @@ def put_model_stats(
         logger.warning(f"Failed to post training status, error: {e}")
 
 
-def s3_setup():
-    # Function to set up a S3 bucket if it does not already exist.
-    s3_client = boto3.resource(
+def get_s3_client():
+    return boto3.resource(
         "s3",
         endpoint_url=S3_ENDPOINT,
         aws_access_key_id=S3_ACCESS_KEY,
         aws_secret_access_key=S3_SECRET_KEY,
         config=Config(signature_version="s3v4"),
     )
+
+
+def s3_setup(s3_client):
+    # Function to set up a S3 bucket if it does not already exist.
+
     try:
         s3_client.meta.client.head_bucket(Bucket=S3_BUCKET)
         logger.debug(f"{S3_BUCKET} bucket exists")
@@ -62,59 +64,3 @@ def s3_setup():
         if error_code == "404":
             logger.warning(f"{S3_BUCKET} bucket does not exist so creating it now")
             s3_client.create_bucket(Bucket=S3_BUCKET)
-
-
-def save_cached_preds(new_preds: dict, saved_preds: dict):
-    """
-    save cached predictions of opnilog to s3 bucket
-    """
-    update_to_s3 = False
-    bucket_name = S3_BUCKET
-    with open(CACHED_PREDS_SAVEFILE, "a") as fout:
-        for ml in new_preds:
-            logger.debug("ml :" + str(ml))
-            saved_preds[ml] = new_preds[ml]
-            fout.write(ml + "\t" + str(new_preds[ml]) + "\n")
-            if len(saved_preds) % SAVE_FREQ == 0:
-                update_to_s3 = True
-    if update_to_s3:
-        try:
-            s3_client.meta.client.upload_file(
-                CACHED_PREDS_SAVEFILE, bucket_name, CACHED_PREDS_SAVEFILE
-            )
-        except Exception as e:
-            logger.error(f"Failed to update predictions to s3. {e}")
-
-
-def reset_cached_preds(saved_preds: dict):
-    """
-    reset all the cached preds if there's a model update.
-    """
-    bucket_name = S3_BUCKET
-    saved_preds.clear()
-    try:
-        os.remove(CACHED_PREDS_SAVEFILE)
-        s3_client.meta.client.delete_object(
-            Bucket=bucket_name, Key=CACHED_PREDS_SAVEFILE
-        )
-    except Exception as e:
-        logger.error("cached preds files failed to delete.")
-
-
-def load_cached_preds(saved_preds: dict):
-    """
-    load cached preds from s3 bucket
-    """
-    bucket_name = S3_BUCKET
-    try:
-        s3_client.meta.client.download_file(
-            bucket_name, CACHED_PREDS_SAVEFILE, CACHED_PREDS_SAVEFILE
-        )
-        with open(CACHED_PREDS_SAVEFILE) as fin:
-            for line in fin:
-                ml, score = line.split("\t")
-                saved_preds[ml] = float(score)
-    except Exception as e:
-        logger.error("cached preds files do not exist.")
-    logger.debug(f"loaded from cached preds: {len(saved_preds)}")
-    return saved_preds

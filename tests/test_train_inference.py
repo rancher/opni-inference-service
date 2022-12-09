@@ -19,7 +19,7 @@ def test_train_load_text():
 def test_train_opnilog_model(mocker):
     train.train_opnilog_model(TRAINING_DATA_PATH, duplicate=10)
 
-    assert os.path.exists("output/opnilog_model_latest.pt")
+    assert os.path.exists("output/nulog_model_latest.pt")
     assert os.path.exists("output/vocab.txt")
 
 

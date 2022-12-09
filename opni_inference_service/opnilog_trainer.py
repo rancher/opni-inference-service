@@ -4,12 +4,8 @@ import json
 import logging
 import os
 import shutil
-import time
 
 # Third Party
-import boto3
-import botocore
-from botocore.client import Config
 from const import (
     DEFAULT_MODEL_NAME,
     ES_ENDPOINT,
@@ -26,6 +22,7 @@ from elasticsearch import AsyncElasticsearch
 from models.opnilog.masker import LogMasker
 from models.opnilog.opnilog_parser import LogParser
 from opni_nats import NatsWrapper
+from utils import get_s3_client, s3_setup
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__file__)
@@ -52,7 +49,6 @@ async def get_all_training_data(payload):
     num_logs_fetched = min(
         (await es_instance.count(index="logs", body=query))["count"], max_size
     )
-    fetch_start_time = time.time()
     while True:
         if first_iteration:
             current_page = await es_instance.search(
@@ -68,38 +64,9 @@ async def get_all_training_data(payload):
             for each_hit in results_hits:
                 all_training_data.append(masker.mask(each_hit["_source"]["log"]))
                 if len(all_training_data) == num_logs_fetched:
-                    """
-                    total_time_taken = time.time() - fetch_start_time
-                    put_model_stats(
-                        stage="fetch",
-                        percentageCompleted=100,
-                        timeElapsed=total_time_taken,
-                        remainingTime=0,
-                    )
-                    """
                     return all_training_data
         else:
-            """
-            total_time_taken = time.time() - fetch_start_time
-            put_model_stats(
-                stage="fetch",
-                percentageCompleted=100,
-                timeElapsed=total_time_taken,
-                remainingTime=0,
-            )
-            """
             return all_training_data
-        """
-        fetching_progress = len(all_training_data) / num_logs_fetched
-        total_time_taken = time.time() - fetch_start_time
-        remaining_time = (total_time_taken // fetching_progress) - total_time_taken
-        post_model_stats(
-            stage="fetch",
-            percentageCompleted=int(100 * fetching_progress),
-            timeElapsed=int(total_time_taken),
-            remainingTime=int(remaining_time),
-        )
-        """
 
 
 async def train_opnilog_model(nw, s3_client, query):
@@ -165,21 +132,6 @@ async def train_opnilog_model(nw, s3_client, query):
         return False
 
 
-def s3_setup(s3_client):
-    # Function to set up a S3 bucket if it does not already exist.
-    try:
-        s3_client.meta.client.head_bucket(Bucket=S3_BUCKET)
-        logger.debug(f"{S3_BUCKET} bucket exists")
-    except botocore.exceptions.ClientError as e:
-        # If a client error is thrown, then check that it was a 404 error.
-        # If it was a 404 error, then the bucket does not exist.
-        error_code = e.response["Error"]["Code"]
-        if error_code == "404":
-            logger.warning(f"{S3_BUCKET} bucket does not exist so creating it now")
-            s3_client.create_bucket(Bucket=S3_BUCKET)
-    return True
-
-
 async def send_signal_to_nats(nw, training_success):
     # Function that will send signal to Nats subjects gpu_trainingjob_status and model_update.
     await nw.connect()
@@ -205,7 +157,7 @@ async def send_signal_to_nats(nw, training_success):
         )
 
 
-async def consume_signal(job_queue, nw):
+async def consume_signal_coroutine(job_queue, nw):
     """
     This function subscribes to the Nats subject gpu_service_training_internal which will receive payload when it is
     time to train a new OpniLog model.
@@ -215,19 +167,13 @@ async def consume_signal(job_queue, nw):
     )
 
 
-async def train_model(job_queue, nw):
+async def train_model_coroutine(job_queue, nw):
     """
     This function will monitor the jobs_queue to see if any new training signal has been received. If it receives the
     signal, it will kick off a new training job and upon successful or failed training of a new OpniLog model, call
     the send_signal_to_nats method to send payload to the appropriate Nats subjects.
     """
-    s3_client = boto3.resource(
-        "s3",
-        endpoint_url=S3_ENDPOINT,
-        aws_access_key_id=S3_ACCESS_KEY,
-        aws_secret_access_key=S3_SECRET_KEY,
-        config=Config(signature_version="s3v4"),
-    )
+    s3_client = get_s3_client()
     while True:
         new_job = await job_queue.get()  ## TODO: should the metadata being used?
         query = json.loads(new_job)
@@ -247,8 +193,8 @@ def main():
     job_queue = asyncio.Queue(loop=loop)
     nw = NatsWrapper()
 
-    consumer_coroutine = consume_signal(job_queue, nw)
-    training_coroutine = train_model(job_queue, nw)
+    consumer_coroutine = consume_signal_coroutine(job_queue, nw)
+    training_coroutine = train_model_coroutine(job_queue, nw)
 
     task = loop.create_task(init_nats(nw))
     loop.run_until_complete(task)

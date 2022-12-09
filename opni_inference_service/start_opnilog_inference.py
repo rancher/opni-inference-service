@@ -4,7 +4,6 @@ import gc
 import json
 import logging
 import os
-import sys
 import time
 import zipfile
 
@@ -16,18 +15,12 @@ from opni_nats import NatsWrapper
 from opni_proto.log_anomaly_payload_pb import Payload, PayloadList
 from opnilog_predictor import OpniLogPredictor
 from opnilog_trainer import consume_signal, train_model
-from utils import s3_setup
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__file__)
 logger.setLevel(LOGGING_LEVEL)
 
 nw = NatsWrapper()
-IS_PRETRAINED_SERVICE = (
-    SERVICE_TYPE == "control-plane"
-    or SERVICE_TYPE == "rancher"
-    or SERVICE_TYPE == "longhorn"
-)
 service_nats_subjects = {
     "control-plane": "opnilog_cp_logs",
     "rancher": "opnilog_rancher_logs",
@@ -99,7 +92,6 @@ async def infer_logs(logs_queue):
     """
     coroutine to get payload from logs_queue, call inference rest API and put predictions to elasticsearch.
     """
-    s3_setup()
     opnilog_predictor = OpniLogPredictor()
     if IS_PRETRAINED_SERVICE:
         opnilog_predictor.load(save_path="model-output/")
@@ -209,16 +201,16 @@ async def init_nats():
     await nw.connect()
 
 
-async def get_pretrain_model():
+def get_pretrain_model():
     filenames = next(os.walk("/model/"), (None, None, []))[2]
     if len(filenames) == 1:
         model_zip_file = f"/model/{filenames[0]}"
         with zipfile.ZipFile(model_zip_file, "r") as zip_ref:
             zip_ref.extractall("./")
             logger.info("Extracted model from zipfile.")
-        return True
-    logger.error("did not find exactly 1 model")
-    return False
+    else:
+        logger.error("did not find exactly 1 model")
+        raise Exception("Error getting pretrained model")
 
 
 if __name__ == "__main__":
@@ -231,12 +223,7 @@ if __name__ == "__main__":
     loop.run_until_complete(task)
 
     if IS_PRETRAINED_SERVICE:
-        init_model_task = loop.create_task(get_pretrain_model())
-        model_loaded = loop.run_until_complete(init_model_task)
-        if not model_loaded:
-            sys.exit(1)
-
-    if IS_PRETRAINED_SERVICE:
+        get_pretrain_model()
         loop.run_until_complete(
             asyncio.gather(
                 inference_coroutine,
