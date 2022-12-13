@@ -1,4 +1,5 @@
 .test*
+build.sh
 *input/
 *output/
 .vscode

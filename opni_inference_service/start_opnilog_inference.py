@@ -8,13 +8,13 @@ import time
 import zipfile
 
 # Third Party
+import opnilog_trainer
 import pandas as pd
 from const import LOGGING_LEVEL, S3_BUCKET, SERVICE_TYPE, THRESHOLD
 from nats.aio.errors import ErrTimeout
 from opni_nats import NatsWrapper
 from opni_proto.log_anomaly_payload_pb import Payload, PayloadList
 from opnilog_predictor import OpniLogPredictor
-from opnilog_trainer import consume_signal, train_model
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__file__)
@@ -233,8 +233,8 @@ if __name__ == "__main__":
 
     elif IS_GPU_SERVICE:
         job_queue = asyncio.Queue(loop=loop)
-        signal_coroutine = consume_signal(job_queue, nw)
-        training_coroutine = train_model(job_queue, nw)
+        signal_coroutine = opnilog_trainer.consume_signal_coroutine(job_queue, nw)
+        training_coroutine = opnilog_trainer.train_model_coroutine(job_queue, nw)
         loop.run_until_complete(
             asyncio.gather(
                 inference_coroutine,
