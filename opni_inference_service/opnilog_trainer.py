@@ -38,6 +38,8 @@ es_instance = AsyncElasticsearch(
     use_ssl=True,
 )
 
+RETRY_LIMIT = 5
+
 
 async def get_all_training_data(payload):
     """
