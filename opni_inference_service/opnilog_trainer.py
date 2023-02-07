@@ -4,34 +4,30 @@ import json
 import logging
 import os
 import shutil
-import time
 
 # Third Party
-import boto3
-import botocore
-from botocore.client import Config
 from const import (
     DEFAULT_MODEL_NAME,
+    DEFAULT_VOCAB_NAME,
     ES_ENDPOINT,
     ES_PASSWORD,
     ES_USERNAME,
     LOGGING_LEVEL,
-    S3_ACCESS_KEY,
     S3_BUCKET,
-    S3_ENDPOINT,
-    S3_SECRET_KEY,
     TRAINING_DATA_PATH,
 )
 from elasticsearch import AsyncElasticsearch
-from masker import LogMasker
+from models.opnilog.masker import LogMasker
+from models.opnilog.opnilog_parser import LogParser
 from opni_nats import NatsWrapper
-from opnilog_parser import LogParser
+from utils import get_s3_client, s3_setup
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__file__)
 logger.setLevel(LOGGING_LEVEL)
 masker = LogMasker()
 ANOMALY_KEYWORDS = ["fail", "error", "fatal"]
+MAX_TRAINING_SAMPLE_SIZE = 64000
 
 es_instance = AsyncElasticsearch(
     [ES_ENDPOINT],
@@ -44,62 +40,27 @@ es_instance = AsyncElasticsearch(
 
 
 async def get_all_training_data(payload):
-    all_training_data = []
-    scroll_id = ""
+    """
+    get training data from Opensearch and mask them.
+    """
+    res_data = []
     query = payload["payload"]["query"]
     max_size = payload["payload"]["max_size"]
-    first_iteration = True
     num_logs_fetched = min(
         (await es_instance.count(index="logs", body=query))["count"], max_size
     )
-    fetch_start_time = time.time()
-    while True:
-        if first_iteration:
-            current_page = await es_instance.search(
-                index="logs", body=query, scroll="1m", size=10000
-            )
-            first_iteration = False
-        else:
-            current_page = await es_instance.scroll(scroll_id=scroll_id, scroll="1m")
-        results_hits = current_page["hits"]["hits"]
-        results_hits_length = len(results_hits)
-        if results_hits_length > 0:
-            scroll_id = current_page["_scroll_id"]
-            for each_hit in results_hits:
-                all_training_data.append(masker.mask(each_hit["_source"]["log"]))
-                if len(all_training_data) == num_logs_fetched:
-                    """
-                    total_time_taken = time.time() - fetch_start_time
-                    put_model_stats(
-                        stage="fetch",
-                        percentageCompleted=100,
-                        timeElapsed=total_time_taken,
-                        remainingTime=0,
-                    )
-                    """
-                    return all_training_data
-        else:
-            """
-            total_time_taken = time.time() - fetch_start_time
-            put_model_stats(
-                stage="fetch",
-                percentageCompleted=100,
-                timeElapsed=total_time_taken,
-                remainingTime=0,
-            )
-            """
-            return all_training_data
-        """
-        fetching_progress = len(all_training_data) / num_logs_fetched
-        total_time_taken = time.time() - fetch_start_time
-        remaining_time = (total_time_taken // fetching_progress) - total_time_taken
-        post_model_stats(
-            stage="fetch",
-            percentageCompleted=int(100 * fetching_progress),
-            timeElapsed=int(total_time_taken),
-            remainingTime=int(remaining_time),
+    current_page = await es_instance.search(
+        index="logs", body=query, scroll="1m", size=10000
+    )
+    while len(current_hit := current_page["hits"]["hits"]) > 0:
+        for h in current_hit:
+            res_data.append(masker.mask(h["_source"]["log"]))
+            if len(res_data) >= num_logs_fetched:
+                return res_data
+        current_page = await es_instance.scroll(
+            scroll_id=current_page["_scroll_id"], scroll="1m"
         )
-        """
+    return res_data
 
 
 async def train_opnilog_model(nw, s3_client, query):
@@ -108,25 +69,28 @@ async def train_opnilog_model(nw, s3_client, query):
     If during this process, there is any exception, it will return False indicating that a new OpniLog model failed to
     train. Otherwise, it will return True.
     """
-    train_test_split = 0.9
-    nr_epochs = 3
-    num_samples = 0
-    parser = LogParser()
+    save_path = "output/"
+    parser = LogParser(save_path=save_path)
     await nw.connect()
-    model_training_payload = {"status": "training"}
-    await nw.publish("model_update", json.dumps(model_training_payload).encode())
+    await nw.publish("model_update", json.dumps({"status": "training"}).encode())
     # Load the training data.
     try:
         texts = await get_all_training_data(query)
-        num_samples = min(len(texts), 64000)
     except Exception as e:
         logging.error(f"Unable to load data. {e}")
         return False
-    try:
-        if not os.path.exists("output/"):
-            os.makedirs("output")
-    except Exception as e:
-        logging.error("Unable to create output folder.")
+
+    # try:
+    #     if not os.path.exists("output/"):
+    #         os.makedirs("output")
+    # except Exception as e:
+    #     logging.error("Unable to create output folder.")
+
+    nr_epochs = 3
+    # undersample if there are too many data, otherwise randomsample
+    num_samples = (
+        MAX_TRAINING_SAMPLE_SIZE if len(texts) > MAX_TRAINING_SAMPLE_SIZE else 0
+    )
     # Check to see if the length of the training data is at least 1. Otherwise, return False.
     if len(texts) > 0:
         try:
@@ -138,17 +102,21 @@ async def train_opnilog_model(nw, s3_client, query):
                 num_samples=num_samples,
                 put_results=True,
             )
-            all_files = os.listdir("output/")
-            if DEFAULT_MODEL_NAME in all_files and "vocab.txt" in all_files:
+            all_files = os.listdir(save_path)
+            if DEFAULT_MODEL_NAME in all_files and DEFAULT_VOCAB_NAME in all_files:
                 logger.debug("Completed training model")
                 s3_client.meta.client.upload_file(
-                    "output/" + DEFAULT_MODEL_NAME, S3_BUCKET, DEFAULT_MODEL_NAME
+                    os.path.join(save_path, DEFAULT_MODEL_NAME),
+                    S3_BUCKET,
+                    DEFAULT_MODEL_NAME,
                 )
                 s3_client.meta.client.upload_file(
-                    "output/vocab.txt", S3_BUCKET, "vocab.txt"
+                    os.path.join(save_path, DEFAULT_VOCAB_NAME),
+                    S3_BUCKET,
+                    DEFAULT_VOCAB_NAME,
                 )
                 logger.info("OpniLog model and vocab have been uploaded to S3.")
-                shutil.rmtree("output/")
+                shutil.rmtree(save_path)
                 return True
             else:
                 logger.error(
@@ -163,21 +131,6 @@ async def train_opnilog_model(nw, s3_client, query):
             "Cannot train OpniLog model as there was no training data present."
         )
         return False
-
-
-def s3_setup(s3_client):
-    # Function to set up a S3 bucket if it does not already exist.
-    try:
-        s3_client.meta.client.head_bucket(Bucket=S3_BUCKET)
-        logger.debug(f"{S3_BUCKET} bucket exists")
-    except botocore.exceptions.ClientError as e:
-        # If a client error is thrown, then check that it was a 404 error.
-        # If it was a 404 error, then the bucket does not exist.
-        error_code = e.response["Error"]["Code"]
-        if error_code == "404":
-            logger.warning(f"{S3_BUCKET} bucket does not exist so creating it now")
-            s3_client.create_bucket(Bucket=S3_BUCKET)
-    return True
 
 
 async def send_signal_to_nats(nw, training_success):
@@ -205,7 +158,7 @@ async def send_signal_to_nats(nw, training_success):
         )
 
 
-async def consume_signal(job_queue, nw):
+async def consume_signal_coroutine(job_queue, nw):
     """
     This function subscribes to the Nats subject gpu_service_training_internal which will receive payload when it is
     time to train a new OpniLog model.
@@ -215,19 +168,13 @@ async def consume_signal(job_queue, nw):
     )
 
 
-async def train_model(job_queue, nw):
+async def train_model_coroutine(job_queue, nw):
     """
     This function will monitor the jobs_queue to see if any new training signal has been received. If it receives the
     signal, it will kick off a new training job and upon successful or failed training of a new OpniLog model, call
     the send_signal_to_nats method to send payload to the appropriate Nats subjects.
     """
-    s3_client = boto3.resource(
-        "s3",
-        endpoint_url=S3_ENDPOINT,
-        aws_access_key_id=S3_ACCESS_KEY,
-        aws_secret_access_key=S3_SECRET_KEY,
-        config=Config(signature_version="s3v4"),
-    )
+    s3_client = get_s3_client()
     while True:
         new_job = await job_queue.get()  ## TODO: should the metadata being used?
         query = json.loads(new_job)
@@ -247,8 +194,8 @@ def main():
     job_queue = asyncio.Queue(loop=loop)
     nw = NatsWrapper()
 
-    consumer_coroutine = consume_signal(job_queue, nw)
-    training_coroutine = train_model(job_queue, nw)
+    consumer_coroutine = consume_signal_coroutine(job_queue, nw)
+    training_coroutine = train_model_coroutine(job_queue, nw)
 
     task = loop.create_task(init_nats(nw))
     loop.run_until_complete(task)

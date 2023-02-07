@@ -3,16 +3,16 @@ import json
 import logging
 
 # Third Party
-from masker import LogMasker
-from opnilog_parser import LogParser
+from models.opnilog.masker import LogMasker
+from models.opnilog.opnilog_parser import LogParser
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(message)s")
 
 
-def load_text():
+def load_text(training_file, duplicate=1):
     texts = []
     masker = LogMasker()
-    with open("input/mix-raw.log") as fin:
+    with open(training_file) as fin:
         for idx, line in enumerate(fin):
             try:
                 log = json.loads(line)
@@ -22,15 +22,15 @@ def load_text():
             except Exception as e:
                 logging.error(e)
 
-    texts = texts * 20
+    texts = texts * duplicate
     return texts
 
 
-def train_opnilog_model():
+def train_opnilog_model(training_file, duplicate=1):
     nr_epochs = 3
     num_samples = 0
     parser = LogParser()
-    texts = load_text()
+    texts = load_text(training_file, duplicate)
 
     tokenized = parser.tokenize_data(texts, isTrain=True)
     parser.tokenizer.save_vocab()
@@ -38,4 +38,4 @@ def train_opnilog_model():
 
 
 if __name__ == "__main__":
-    train_opnilog_model()
+    train_opnilog_model(training_file="input/mix-raw.log")

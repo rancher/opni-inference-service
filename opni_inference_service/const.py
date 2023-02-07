@@ -23,11 +23,12 @@ MODEL_STATS_ENDPOINT = "http://opni-internal:11080/ModelTraining/model/statistic
 
 # config values and hyperparameters for opnilg
 DEFAULT_MODEL_NAME = "nulog_model_latest.pt"
+DEFAULT_VOCAB_NAME = "vocab.txt"
 DEFAULT_MODELREADY_PAYLOAD = {
     "bucket": S3_BUCKET,
     "bucket_files": {
-        "model_file": "nulog_model_latest.pt",
-        "vocab_file": "vocab.txt",
+        "model_file": DEFAULT_MODEL_NAME,
+        "vocab_file": DEFAULT_VOCAB_NAME,
     },
 }
 TRAINING_DATA_PATH = os.getenv(

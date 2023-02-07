@@ -7,6 +7,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(messa
 
 class LogTokenizer:
     def __init__(self, filepath="output/"):
+        if not os.path.exists(filepath):
+            os.makedirs(filepath)
         self.filepath = filepath
         self.word2index = {
             "<PAD>": 0,

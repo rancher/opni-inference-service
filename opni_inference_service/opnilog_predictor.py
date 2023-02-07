@@ -4,9 +4,7 @@ import os
 from typing import List
 
 # Third Party
-import boto3
 import inference as opniloginf
-from botocore.config import Config
 from const import (
     DEFAULT_MODELREADY_PAYLOAD,
     LOGGING_LEVEL,
@@ -16,7 +14,8 @@ from const import (
     S3_ENDPOINT,
     S3_SECRET_KEY,
 )
-from opnilog_parser import using_GPU
+from models.opnilog.opnilog_parser import using_GPU
+from utils import get_s3_client
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__file__)
@@ -27,13 +26,7 @@ class OpniLogPredictor:
     def __init__(self):
         self.is_ready = False
         self.parser = None
-        self.s3_client = boto3.resource(
-            "s3",
-            endpoint_url=S3_ENDPOINT,
-            aws_access_key_id=S3_ACCESS_KEY,
-            aws_secret_access_key=S3_SECRET_KEY,
-            config=Config(signature_version="s3v4"),
-        )
+        self.s3_client = get_s3_client()
 
     def download_from_s3(
         self,
