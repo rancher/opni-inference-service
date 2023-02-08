@@ -17,10 +17,12 @@ from const import (
     TRAINING_DATA_PATH,
 )
 from elasticsearch import AsyncElasticsearch
-from models.opnilog.masker import LogMasker
-from models.opnilog.opnilog_parser import LogParser
 from opni_nats import NatsWrapper
 from utils import get_s3_client, s3_setup
+
+# Local
+from models.opnilog.masker import LogMasker
+from models.opnilog.opnilog_parser import LogParser
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__file__)
@@ -85,6 +87,7 @@ async def train_opnilog_model(nw, s3_client, query):
     # Load the training data.
     try:
         texts = await get_all_training_data(query)
+        masked_logs = mask_logs(texts)
     except Exception as e:
         logging.error(f"Unable to load data. {e}")
         return False
