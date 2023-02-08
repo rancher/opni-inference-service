@@ -258,6 +258,8 @@ class LogParser:
 
         return anomaly_preds
 
+    # def get_streaming_dataloader(self,):
+
     def get_train_eval_dataloaders(
         self, data_tokenized, transform_to_tensor, training_eval_split=0.9
     ):
@@ -273,8 +275,7 @@ class LogParser:
             all_data_sampler = WeightedRandomSampler(
                 weights=list(weights), num_samples=self.num_samples, replacement=True
             )
-        if self.num_samples == 0:
-
+        else:
             all_data_sampler = RandomSampler(train_data)
         all_data_sampler_list = list(all_data_sampler)
         train_eval_index = int(training_eval_split * len(all_data_sampler_list))

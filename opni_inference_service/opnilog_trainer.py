@@ -3,9 +3,12 @@ import asyncio
 import json
 import logging
 import os
+import random
 import shutil
+from collections import defaultdict
 
 # Third Party
+import numpy as np
 from const import (
     DEFAULT_MODEL_NAME,
     DEFAULT_VOCAB_NAME,
@@ -43,27 +46,94 @@ async def get_all_training_data(payload):
     """
     get training data from Opensearch and mask them.
     """
-    res_data = []
+
     query = payload["payload"]["query"]
-    max_size = payload["payload"]["max_size"]
-    num_logs_fetched = min(
+    max_size = 100000  # payload["payload"]["max_size"]
+    scroll_time = "5m"
+    num_logs_to_fetch = min(
         (await es_instance.count(index="logs", body=query))["count"], max_size
     )
     current_page = await es_instance.search(
-        index="logs", body=query, scroll="1m", size=10000
+        index="logs", body=query, scroll=scroll_time, size=10000
     )
-    while len(current_hit := current_page["hits"]["hits"]) > 0:
+    logs_fetched = 0
+    batch_data = []
+    while (
+        len(current_hit := current_page["hits"]["hits"]) > 0
+        and num_logs_to_fetch - logs_fetched > 0
+    ):
         for h in current_hit:
-            res_data.append(masker.mask(h["_source"]["log"]))
-            if len(res_data) >= num_logs_fetched:
-                return res_data
+            batch_data.append(h["_source"]["log"])
+            logs_fetched += 1
+            if num_logs_to_fetch - logs_fetched <= 0:
+                break
+        logger.warning(f"yielding data len of {len(batch_data)}")
+        yield batch_data
+        logger.warning(f" fected {logs_fetched} logs")
+        batch_data = []
         current_page = await es_instance.scroll(
-            scroll_id=current_page["_scroll_id"], scroll="1m"
+            scroll_id=current_page["_scroll_id"], scroll=scroll_time
         )
-    return res_data
 
 
-async def train_opnilog_model(nw, s3_client, query):
+def batch_mask(lst):
+    masker = LogMasker()
+    return [masker.mask(l) for l in lst]
+
+
+def get_weights(data):
+    unique_sample_counter = defaultdict(int)
+    for s in data:
+        unique_sample_counter[str(s)] += 1
+
+    for key in unique_sample_counter:
+        count = unique_sample_counter[key]
+        unique_sample_counter[key] = np.sqrt(count) / count  # the sqrt weight
+
+    weights = np.array([unique_sample_counter[str(s)] for s in data])
+    return weights
+
+
+async def masking(raw_data, payload):
+    training_size = 8192 * 4
+    max_size = 100000
+    query = payload["payload"]["query"]
+    num_logs_to_fetch = min(
+        (await es_instance.count(index="logs", body=query))["count"], max_size
+    )
+    # Standard Library
+    from multiprocessing import Pool
+
+    n_worker = 3
+    res = []
+    async for batch in raw_data:
+
+        batch_masked = []
+        with Pool() as p:
+            a_res = p.map(batch_mask, np.array_split(batch, n_worker))
+            for a in a_res:
+                batch_masked.extend(a)
+        logging.warning(f"getting masking data len of {len(batch_masked)}")
+        # yield batch_res
+
+        # reduce batch_res accordingly
+        weights = get_weights(batch_masked)
+        if training_size < num_logs_to_fetch:
+            size_reduce_to = int(training_size * len(batch) / num_logs_to_fetch)
+            reduced_batch = random.choices(
+                population=batch_masked, weights=weights, k=size_reduce_to
+            )
+            logger.warning(f"size reduced from {len(batch)} to {size_reduce_to}")
+        else:
+            reduced_batch = batch_masked
+
+        res.extend(reduced_batch)
+
+    logger.warning(f"total size : {len(res)}")
+    return res
+
+
+async def train_opnilog_model(nw, s3_client, payload):
     """
     This function will be used to load the training data and then train the new OpniLog model.
     If during this process, there is any exception, it will return False indicating that a new OpniLog model failed to
@@ -74,11 +144,19 @@ async def train_opnilog_model(nw, s3_client, query):
     await nw.connect()
     await nw.publish("model_update", json.dumps({"status": "training"}).encode())
     # Load the training data.
-    try:
-        texts = await get_all_training_data(query)
-    except Exception as e:
-        logging.error(f"Unable to load data. {e}")
-        return False
+    # try:
+    if True:
+        raw_texts = get_all_training_data(payload)
+        # texts = masking(texts)
+        texts = await masking(raw_texts, payload)
+    # except Exception as e:
+    #     logging.error(f"Unable to load data. {e}")
+    #     return False
+
+    # new_texts = []
+    # async for t in texts:
+    #     new_texts.extend(t)
+    # texts = new_texts
 
     # try:
     #     if not os.path.exists("output/"):
