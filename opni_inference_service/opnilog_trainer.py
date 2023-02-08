@@ -41,6 +41,13 @@ es_instance = AsyncElasticsearch(
 RETRY_LIMIT = 5
 
 
+def mask_logs(all_training_logs):
+    all_masked_logs = []
+    for log in all_training_logs:
+        all_masked_logs.append(masker.mask(log))
+    return all_masked_logs
+
+
 async def get_all_training_data(payload):
     """
     get training data from Opensearch and mask them.
@@ -94,9 +101,9 @@ async def train_opnilog_model(nw, s3_client, query):
         MAX_TRAINING_SAMPLE_SIZE if len(texts) > MAX_TRAINING_SAMPLE_SIZE else 0
     )
     # Check to see if the length of the training data is at least 1. Otherwise, return False.
-    if len(texts) > 0:
+    if len(masked_logs) > 0:
         try:
-            tokenized = parser.tokenize_data(texts, isTrain=True)
+            tokenized = parser.tokenize_data(masked_logs, isTrain=True)
             parser.tokenizer.save_vocab()
             parser.train(
                 tokenized,
