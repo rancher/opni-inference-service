@@ -17,6 +17,7 @@ from const import (
     TRAINING_DATA_PATH,
 )
 from elasticsearch import AsyncElasticsearch
+from elasticsearch.exceptions import *
 from opni_nats import NatsWrapper
 from utils import get_s3_client, s3_setup
 
@@ -60,17 +61,27 @@ async def get_all_training_data(payload):
     num_logs_fetched = min(
         (await es_instance.count(index="logs", body=query))["count"], max_size
     )
-    current_page = await es_instance.search(
-        index="logs", body=query, scroll="1m", size=10000
-    )
+    num_retries = 0
+    try:
+        current_page = await es_instance.search(
+            index="logs", body=query, scroll="5m", size=10000
+        )
+    except Exception as e:
+        logging.error("Unable to query Opensearch {e}")
+        return res_data
     while len(current_hit := current_page["hits"]["hits"]) > 0:
         for h in current_hit:
-            res_data.append(masker.mask(h["_source"]["log"]))
-            if len(res_data) >= num_logs_fetched:
+            res_data.append(h["_source"]["log"])
+            if len(res_data) == num_logs_fetched:
                 return res_data
-        current_page = await es_instance.scroll(
-            scroll_id=current_page["_scroll_id"], scroll="1m"
-        )
+        while num_retries < RETRY_LIMIT:
+            try:
+                current_page = await es_instance.scroll(
+                    scroll_id=current_page["_scroll_id"], scroll="5m"
+                )
+                break
+            except NotFoundError as e:
+                num_retries += 1
     return res_data
 
 
