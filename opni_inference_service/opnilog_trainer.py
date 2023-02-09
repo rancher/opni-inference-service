@@ -17,10 +17,13 @@ from const import (
     TRAINING_DATA_PATH,
 )
 from elasticsearch import AsyncElasticsearch
-from models.opnilog.masker import LogMasker
-from models.opnilog.opnilog_parser import LogParser
+from elasticsearch.exceptions import NotFoundError
 from opni_nats import NatsWrapper
 from utils import get_s3_client, s3_setup
+
+# Local
+from models.opnilog.masker import LogMasker
+from models.opnilog.opnilog_parser import LogParser
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__file__)
@@ -38,6 +41,8 @@ es_instance = AsyncElasticsearch(
     use_ssl=True,
 )
 
+RETRY_LIMIT = 5
+
 
 async def get_all_training_data(payload):
     """
@@ -49,17 +54,27 @@ async def get_all_training_data(payload):
     num_logs_fetched = min(
         (await es_instance.count(index="logs", body=query))["count"], max_size
     )
-    current_page = await es_instance.search(
-        index="logs", body=query, scroll="1m", size=10000
-    )
+    num_retries = 0
+    try:
+        current_page = await es_instance.search(
+            index="logs", body=query, scroll="5m", size=10000
+        )
+    except Exception as e:
+        logging.error("Unable to query Opensearch {e}")
+        return res_data
     while len(current_hit := current_page["hits"]["hits"]) > 0:
         for h in current_hit:
-            res_data.append(masker.mask(h["_source"]["log"]))
-            if len(res_data) >= num_logs_fetched:
+            res_data.append(h["_source"]["log"])
+            if len(res_data) == num_logs_fetched:
                 return res_data
-        current_page = await es_instance.scroll(
-            scroll_id=current_page["_scroll_id"], scroll="1m"
-        )
+        while num_retries < RETRY_LIMIT:
+            try:
+                current_page = await es_instance.scroll(
+                    scroll_id=current_page["_scroll_id"], scroll="5m"
+                )
+                break
+            except NotFoundError as e:
+                num_retries += 1
     return res_data
 
 
@@ -76,6 +91,7 @@ async def train_opnilog_model(nw, s3_client, query):
     # Load the training data.
     try:
         texts = await get_all_training_data(query)
+        masked_logs = [masker.mask(log) for log in texts]
     except Exception as e:
         logging.error(f"Unable to load data. {e}")
         return False
@@ -92,9 +108,9 @@ async def train_opnilog_model(nw, s3_client, query):
         MAX_TRAINING_SAMPLE_SIZE if len(texts) > MAX_TRAINING_SAMPLE_SIZE else 0
     )
     # Check to see if the length of the training data is at least 1. Otherwise, return False.
-    if len(texts) > 0:
+    if len(masked_logs) > 0:
         try:
-            tokenized = parser.tokenize_data(texts, isTrain=True)
+            tokenized = parser.tokenize_data(masked_logs, isTrain=True)
             parser.tokenizer.save_vocab()
             parser.train(
                 tokenized,
