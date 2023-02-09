@@ -17,7 +17,7 @@ from const import (
     TRAINING_DATA_PATH,
 )
 from elasticsearch import AsyncElasticsearch
-from elasticsearch.exceptions import *
+from elasticsearch.exceptions import NotFoundError
 from opni_nats import NatsWrapper
 from utils import get_s3_client, s3_setup
 
@@ -42,13 +42,6 @@ es_instance = AsyncElasticsearch(
 )
 
 RETRY_LIMIT = 5
-
-
-def mask_logs(all_training_logs):
-    all_masked_logs = []
-    for log in all_training_logs:
-        all_masked_logs.append(masker.mask(log))
-    return all_masked_logs
 
 
 async def get_all_training_data(payload):
@@ -98,7 +91,7 @@ async def train_opnilog_model(nw, s3_client, query):
     # Load the training data.
     try:
         texts = await get_all_training_data(query)
-        masked_logs = mask_logs(texts)
+        masked_logs = [masker.mask(log) for log in texts]
     except Exception as e:
         logging.error(f"Unable to load data. {e}")
         return False
