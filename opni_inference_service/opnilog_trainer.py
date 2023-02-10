@@ -113,19 +113,19 @@ async def masking(raw_data, payload):
     # Standard Library
     from multiprocessing import Pool
 
-    # n_worker = 3
+    n_worker = 3
     res = []
     with Pool(3) as p:
         async for batch in raw_data:
 
             s0 = time.time()
-            # batch_masked = []
-            #     a_res = p.map(batch_mask, np.array_split(batch, n_worker))
-            #     for a in a_res:
-            #         batch_masked.extend(a)
+            batch_masked = []
+            a_res = p.map(batch_mask, np.array_split(batch, n_worker))
+            for a in a_res:
+                batch_masked.extend(a)
             # logging.warning(f"getting masking data len of {len(batch_masked)}")
             # yield batch_res
-            batch_masked = batch_mask(batch)
+            # batch_masked = batch_mask(batch)
             # reduce batch_res accordingly
             s1 = time.time()
             weights = get_weights(batch_masked)

@@ -313,20 +313,20 @@ class MaskedDataset(Dataset):
         weights = np.array([unique_sample_counter[str(s)] for s in self.data])
         return weights
 
-    @staticmethod
-    def subsequent_mask(size, trg):
-        "Mask out subsequent positions."
-        attn_shape = (size, size)
-        subsequent_mask = np.triu(np.ones(attn_shape), k=1).astype("uint8")
-        t = torch.from_numpy(subsequent_mask) == 0
+    # @staticmethod
+    # def subsequent_mask(size, trg):
+    #     "Mask out subsequent positions."
+    #     attn_shape = (size, size)
+    #     subsequent_mask = np.triu(np.ones(attn_shape), k=1).astype("uint8")
+    #     t = torch.from_numpy(subsequent_mask) == 0
 
-        return t & trg
+    #     return t & trg
 
-    def make_std_mask(self, trg):
-        "Create a mask to hide padding and future words."
-        trg_mask = trg != self.pad
-        trg_mask = self.subsequent_mask(trg.shape[0], trg_mask)
-        return trg_mask
+    # def make_std_mask(self, trg):
+    #     "Create a mask to hide padding and future words."
+    #     trg_mask = trg != self.pad
+    #     trg_mask = self.subsequent_mask(trg.shape[0], trg_mask)
+    #     return trg_mask
 
     def _get_padded_data(self, data, pad_len):
         d = self.c(data)
