@@ -1,10 +1,12 @@
 # Standard Library
 import asyncio
+import gc
 import json
 import logging
 import os
 import random
 import shutil
+import time
 from collections import defaultdict
 
 # Third Party
@@ -48,7 +50,7 @@ async def get_all_training_data(payload):
     """
 
     query = payload["payload"]["query"]
-    max_size = 100000  # payload["payload"]["max_size"]
+    max_size = 5000000  # payload["payload"]["max_size"]
     scroll_time = "5m"
     num_logs_to_fetch = min(
         (await es_instance.count(index="logs", body=query))["count"], max_size
@@ -70,6 +72,8 @@ async def get_all_training_data(payload):
         logger.warning(f"yielding data len of {len(batch_data)}")
         yield batch_data
         logger.warning(f" fected {logs_fetched} logs")
+        del batch_data
+        gc.collect()
         batch_data = []
         current_page = await es_instance.scroll(
             scroll_id=current_page["_scroll_id"], scroll=scroll_time
@@ -77,11 +81,15 @@ async def get_all_training_data(payload):
 
 
 def batch_mask(lst):
-    masker = LogMasker()
-    return [masker.mask(l) for l in lst]
+    # masker = LogMasker()
+    s_time = time.time()
+    res = [masker.mask(l) for l in lst]
+    logger.warning(f"masked {len(lst)} logs in {time.time() - s_time} seconds")
+    return res
 
 
 def get_weights(data):
+    s1 = time.time()
     unique_sample_counter = defaultdict(int)
     for s in data:
         unique_sample_counter[str(s)] += 1
@@ -91,12 +99,13 @@ def get_weights(data):
         unique_sample_counter[key] = np.sqrt(count) / count  # the sqrt weight
 
     weights = np.array([unique_sample_counter[str(s)] for s in data])
+    logger.warning(f"weights in {time.time() - s1}")
     return weights
 
 
 async def masking(raw_data, payload):
-    training_size = 8192 * 4
-    max_size = 100000
+    training_size = 8192 * 4 * 4
+    max_size = 5000000
     query = payload["payload"]["query"]
     num_logs_to_fetch = min(
         (await es_instance.count(index="logs", body=query))["count"], max_size
@@ -104,31 +113,39 @@ async def masking(raw_data, payload):
     # Standard Library
     from multiprocessing import Pool
 
-    n_worker = 3
+    # n_worker = 3
     res = []
-    async for batch in raw_data:
+    with Pool(3) as p:
+        async for batch in raw_data:
 
-        batch_masked = []
-        with Pool() as p:
-            a_res = p.map(batch_mask, np.array_split(batch, n_worker))
-            for a in a_res:
-                batch_masked.extend(a)
-        logging.warning(f"getting masking data len of {len(batch_masked)}")
-        # yield batch_res
+            s0 = time.time()
+            # batch_masked = []
+            #     a_res = p.map(batch_mask, np.array_split(batch, n_worker))
+            #     for a in a_res:
+            #         batch_masked.extend(a)
+            # logging.warning(f"getting masking data len of {len(batch_masked)}")
+            # yield batch_res
+            batch_masked = batch_mask(batch)
+            # reduce batch_res accordingly
+            s1 = time.time()
+            weights = get_weights(batch_masked)
+            if training_size < num_logs_to_fetch:
+                size_reduce_to = int(training_size * len(batch) / num_logs_to_fetch)
+                reduced_batch = random.choices(
+                    population=batch_masked, weights=weights, k=size_reduce_to
+                )
+                logger.warning(f"size reduced from {len(batch)} to {size_reduce_to}")
+            else:
+                reduced_batch = batch_masked
 
-        # reduce batch_res accordingly
-        weights = get_weights(batch_masked)
-        if training_size < num_logs_to_fetch:
-            size_reduce_to = int(training_size * len(batch) / num_logs_to_fetch)
-            reduced_batch = random.choices(
-                population=batch_masked, weights=weights, k=size_reduce_to
+            res.extend(reduced_batch)
+            s2 = time.time()
+            logger.warning(
+                f"total batch time : {s2 - s0}, while weights assignment time : {s1 - s0}"
             )
-            logger.warning(f"size reduced from {len(batch)} to {size_reduce_to}")
-        else:
-            reduced_batch = batch_masked
-
-        res.extend(reduced_batch)
-
+            del batch_masked
+            del reduced_batch
+            gc.collect()
     logger.warning(f"total size : {len(res)}")
     return res
 
@@ -144,14 +161,14 @@ async def train_opnilog_model(nw, s3_client, payload):
     await nw.connect()
     await nw.publish("model_update", json.dumps({"status": "training"}).encode())
     # Load the training data.
-    # try:
-    if True:
+
+    try:
         raw_texts = get_all_training_data(payload)
         # texts = masking(texts)
         texts = await masking(raw_texts, payload)
-    # except Exception as e:
-    #     logging.error(f"Unable to load data. {e}")
-    #     return False
+    except Exception as e:
+        logging.error(f"Unable to load data. {e}")
+        return False
 
     # new_texts = []
     # async for t in texts:
@@ -164,7 +181,7 @@ async def train_opnilog_model(nw, s3_client, payload):
     # except Exception as e:
     #     logging.error("Unable to create output folder.")
 
-    nr_epochs = 3
+    nr_epochs = 1  # 3
     # undersample if there are too many data, otherwise randomsample
     num_samples = (
         MAX_TRAINING_SAMPLE_SIZE if len(texts) > MAX_TRAINING_SAMPLE_SIZE else 0
