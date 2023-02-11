@@ -92,3 +92,11 @@ class LogTokenizer:
             else:
                 res.append(self.word2index["<UNK>"])
         return res
+
+    def tokenize_data(self, input_text, isTrain=False):
+        data_tokenized = []
+        for i in range(0, len(input_text)):
+            text_i = input_text[i].lower()  ## lowercase before tokenization
+            tokenized = self.tokenize("<CLS> " + text_i, isTrain=isTrain)
+            data_tokenized.append(tokenized)
+        return data_tokenized

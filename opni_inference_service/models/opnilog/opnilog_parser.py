@@ -7,7 +7,7 @@ import time
 import pandas as pd
 import torch
 import torch.nn as nn
-from const import THRESHOLD
+from const import MAX_TRAINING_SAMPLE_SIZE, THRESHOLD
 from models.opnilog.opnilog_model import *  # should improve this
 from models.opnilog.opnilog_tokenizer import LogTokenizer
 from torchvision import transforms
@@ -88,6 +88,9 @@ class LogParser:
         num_samples=0,
         step_size=100,
         put_results=False,
+        is_streaming=False,
+        iter_function=None,
+        iter_input_list=None,
     ):
         self.mask_percentage = mask_percentage
         self.pad_len = pad_len
@@ -101,6 +104,9 @@ class LogParser:
         self.num_samples = num_samples
         self.nr_epochs = nr_epochs
         self.step_size = step_size
+        self.is_streaming = is_streaming
+        self.iter_function = iter_function
+        self.iter_input_list = iter_input_list
 
         logging.debug("learning rate : " + str(self.lr))
         transform_to_tensor = transforms.Lambda(lambda lst: torch.tensor(lst))
@@ -129,9 +135,16 @@ class LogParser:
             # model.load_state_dict(torch.load(self.model_path))
             prev_epoch, prev_loss = self.load_model(model, model_opt)
 
-        train_dataloader, eval_dataloader = self.get_train_eval_dataloaders(
-            data_tokenized, transform_to_tensor
-        )
+        if self.is_streaming:
+            train_dataloader = self.get_streaming_dataloader()
+            self.training_size = (
+                MAX_TRAINING_SAMPLE_SIZE // self.batch_size
+            )  # streaming dataloader has no len()
+        else:
+            train_dataloader, eval_dataloader = self.get_train_eval_dataloaders(
+                data_tokenized, transform_to_tensor
+            )
+            self.training_size = len(train_dataloader)
         ## train if no model
         model.train()
         logging.info(f"#######Training Model within {self.nr_epochs} epochs...######")
@@ -157,16 +170,17 @@ class LogParser:
 
         self.save_model(model=model, model_opt=model_opt, epoch=self.nr_epochs, loss=0)
 
-        self.init_inference()
-        eval_predictions = self.predict(eval_dataloader, False)
-        num_predictions = len(eval_predictions)
-        num_normal = 0
-        for pred in eval_predictions:
-            if pred >= THRESHOLD:
-                num_normal += 1
-        logging.info(
-            f"Model finished training predicting {num_normal} logs correctly out of {num_predictions} total logs for an accuracy of {num_normal/num_predictions} on eval dataset."
-        )
+        if not self.is_streaming:
+            self.init_inference()
+            eval_predictions = self.predict(eval_dataloader, False)
+            num_predictions = len(eval_predictions)
+            num_normal = 0
+            for pred in eval_predictions:
+                if pred >= THRESHOLD:
+                    num_normal += 1
+            logging.info(
+                f"Model finished training predicting {num_normal} logs correctly out of {num_predictions} total logs for an accuracy of {num_normal/num_predictions} on eval dataset."
+            )
 
     def init_inference(
         self,
@@ -258,7 +272,19 @@ class LogParser:
 
         return anomaly_preds
 
-    # def get_streaming_dataloader(self,):
+    def get_streaming_dataloader(
+        self,
+    ):
+        train_data = IterablePaddedDataset(
+            tokenizer=self.tokenizer,
+            iter_function=self.iter_function,
+            iter_input_list=self.iter_input_list,
+            pad_len=self.pad_len,
+        )
+        train_dataloader = DataLoader(
+            train_data, num_workers=1, batch_size=self.batch_size
+        )
+        return train_dataloader
 
     def get_train_eval_dataloaders(
         self, data_tokenized, transform_to_tensor, training_eval_split=0.9
@@ -313,12 +339,7 @@ class LogParser:
             return []
 
     def tokenize_data(self, input_text, isTrain=False):
-        data_tokenized = []
-        for i in range(0, len(input_text)):
-            text_i = input_text[i].lower()  ## lowercase before tokenization
-            tokenized = self.tokenizer.tokenize("<CLS> " + text_i, isTrain=isTrain)
-            data_tokenized.append(tokenized)
-        return data_tokenized
+        return self.tokenizer.tokenize_data(input_text, isTrain=isTrain)
 
     def log_to_dataframe(self, windows_folder_path):
         """Function to transform log file to dataframe"""
@@ -409,13 +430,13 @@ class LogParser:
 
             if i % self.step_size == 1:
                 elapsed = time.time() - start
-                training_progress = ((i / len(dataloader)) + epoch) / self.nr_epochs
+                training_progress = ((i / self.training_size) + epoch) / self.nr_epochs
                 total_time_taken = time.time() - training_start_time
                 remaining_time = (
                     total_time_taken // training_progress
                 ) - total_time_taken
                 logging.info(
-                    f"| Epoch: {epoch} | Total Progress: {(training_progress * 100):.2f}% | Training Time Taken: {total_time_taken:.2f}s | ETC: {(remaining_time):.2f}s | Epoch Step: {i}/{len(dataloader)} | Loss: {(loss / batch.ntokens):.4f} | Tokens per Sec: {(tokens / elapsed):.2f} |"
+                    f"| Epoch: {epoch} | Total Progress: {(training_progress * 100):.2f}% | Training Time Taken: {total_time_taken:.2f}s | ETC: {(remaining_time):.2f}s | Epoch Step: {i}/{self.training_size} | Loss: {(loss / batch.ntokens):.4f} | Tokens per Sec: {(tokens / elapsed):.2f} |"
                 )
                 if put_results:
                     put_model_stats(
