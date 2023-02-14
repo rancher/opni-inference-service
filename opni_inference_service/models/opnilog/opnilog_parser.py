@@ -2,6 +2,7 @@
 import logging
 import os
 import time
+from copy import deepcopy
 
 # Third Party
 import pandas as pd
@@ -157,6 +158,7 @@ class LogParser:
                 epoch=epoch,
                 training_start_time=training_start_time,
                 put_results=put_results,
+                is_streaming=is_streaming,
             )
         end_time = time.time()
         if put_results:
@@ -282,7 +284,9 @@ class LogParser:
             pad_len=self.pad_len,
         )
         train_dataloader = DataLoader(
-            train_data, num_workers=1, batch_size=self.batch_size
+            train_data,
+            batch_size=self.batch_size,
+            num_workers=1,
         )
         return train_dataloader
 
@@ -396,8 +400,57 @@ class LogParser:
                 idxs.append(dg)
         return torch.stack(src), torch.stack(trg), torch.Tensor(idxs)
 
+    def _get_padded_data(self, raw_data):
+        data = self.tokenizer.tokenize_data(raw_data, isTrain=True)
+        logging.info(f"worker valid tokens : {self.tokenizer.valid_words}")
+        pad_len = self.pad_len
+        d = deepcopy(data)
+        npd = np.asarray(d)
+        pd = np.zeros(shape=(len(d), pad_len))
+        for n in range(len(d)):
+            if len(npd[n]) > pad_len:
+                pd[n] = np.asarray(npd[n][:pad_len])
+            else:
+                pd[n][: len(npd[n])] = np.asarray(npd[n])
+        pd = pd.astype("long")
+        # yield from self._prepare_metadata(pd, d)
+        return self._prepare_metadata(pd, d)
+
+    def _prepare_metadata(self, padded_data, data):
+        srcs = []
+        offsets = []
+        data_lens = []
+        indices = []
+        for index, src in enumerate(padded_data):
+
+            offset = 1
+            data_len = (
+                len(data[index]) - 1
+                if len(data[index]) < self.pad_len
+                else self.pad_len - 1
+            )
+
+            # yield src, offset, data_len, index
+            srcs.append(src)
+            offsets.append(offset)
+            data_lens.append(data_len)
+            indices.append(index)
+        return (
+            torch.tensor(srcs),
+            torch.tensor(offsets),
+            torch.tensor(data_lens),
+            torch.tensor(indices),
+        )
+
     def run_epoch(
-        self, dataloader, model, loss_compute, epoch, training_start_time, put_results
+        self,
+        dataloader,
+        model,
+        loss_compute,
+        epoch,
+        training_start_time,
+        put_results,
+        is_streaming=False,
     ):
 
         start = time.time()
@@ -405,7 +458,8 @@ class LogParser:
         total_loss = 0
         tokens = 0
         for i, batch in enumerate(dataloader):
-
+            if is_streaming:
+                batch = self._get_padded_data(batch)
             b_input, b_labels, _ = self.do_mask(batch)
             batch = Batch(b_input, b_labels, 0)
             if using_GPU:
@@ -429,6 +483,7 @@ class LogParser:
             tokens += batch.ntokens
 
             if i % self.step_size == 1:
+                logging.info(f"valid words : {self.tokenizer.valid_words}")
                 elapsed = time.time() - start
                 training_progress = ((i / self.training_size) + epoch) / self.nr_epochs
                 total_time_taken = time.time() - training_start_time

@@ -172,7 +172,7 @@ def masking(payload):
         else:
             reduced_batch = batch_masked
 
-        yield reduced_batch
+        yield from reduced_batch
         del batch_masked
         del reduced_batch
         gc.collect()

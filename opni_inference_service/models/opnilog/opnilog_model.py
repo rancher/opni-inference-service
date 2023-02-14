@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # Standard Library
 import copy
+import logging
 import math
 from collections import defaultdict
 
@@ -298,14 +299,16 @@ class IterablePaddedDataset(IterableDataset):
         worker_info = torch.utils.data.get_worker_info()
         if worker_info is None or worker_info.num_workers != len(self.iter_input_list):
             raise ValueError("Number of workers doesn't match.")
-        res = self._get_padded_data(
-            self.iter_function(self.iter_input_list[worker_info.id])
-        )
-        yield from res
+        # res = self._get_padded_data(
+        #     self.iter_function(self.iter_input_list[worker_info.id])
+        # )
+        # yield from res
+        yield from self.iter_function(self.iter_input_list[worker_info.id])
 
     def _get_padded_data(self, data_stream):
         for raw_data in data_stream:
             data = self.tokenizer.tokenize_data(raw_data, isTrain=True)
+            logging.info(f"worker valod tokens : {self.tokenizer.valid_words}")
             pad_len = self.pad_len
             d = self.c(data)
             npd = np.asarray(d)
