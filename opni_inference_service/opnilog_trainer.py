@@ -18,6 +18,7 @@ from const import (
     ES_PASSWORD,
     ES_USERNAME,
     LOGGING_LEVEL,
+    MAX_TRAINING_SAMPLE_SIZE,
     S3_BUCKET,
     TRAINING_DATA_PATH,
 )
@@ -33,7 +34,6 @@ logger = logging.getLogger(__file__)
 logger.setLevel(LOGGING_LEVEL)
 masker = LogMasker()
 ANOMALY_KEYWORDS = ["fail", "error", "fatal"]
-MAX_TRAINING_SAMPLE_SIZE = 64000
 
 es_instance = Elasticsearch(
     [ES_ENDPOINT],
@@ -84,6 +84,15 @@ def yield_all_training_data(payload):
     """
     yield training data from Opensearch
     """
+    es_instance = Elasticsearch(
+        [ES_ENDPOINT],
+        port=9200,
+        http_compress=True,
+        http_auth=(ES_USERNAME, ES_PASSWORD),
+        verify_certs=False,
+        use_ssl=True,
+    )
+
     query = payload["payload"]["query"]
     scroll_time = "5m"
     num_logs_to_fetch = min(payload["payload"]["count"], MAX_FETCH_SIZE)
@@ -101,7 +110,9 @@ def yield_all_training_data(payload):
             logs_fetched += 1
             if num_logs_to_fetch - logs_fetched <= 0:
                 break
-        logger.warning(f"yielding data len of {len(batch_data)}")
+        logger.warning(
+            f"yielding data len of {len(batch_data)}, scroll_id : {current_page['_scroll_id']}"
+        )
         yield batch_data
         logger.warning(f" fected {logs_fetched} logs")
         del batch_data
@@ -136,6 +147,9 @@ def mask_batch(payload):
     """
     training_size = MAX_TRAINING_SAMPLE_SIZE
     num_logs_to_fetch = min(payload["payload"]["count"], MAX_FETCH_SIZE)
+    logger.warning(
+        f" num logs to fetch : {num_logs_to_fetch}, training size : {training_size}"
+    )
 
     for batch in yield_all_training_data(payload):
 
