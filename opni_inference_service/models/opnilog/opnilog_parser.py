@@ -106,8 +106,6 @@ class LogParser:
         self.nr_epochs = nr_epochs
         self.step_size = step_size
         self.is_streaming = is_streaming
-        self.iter_function = iter_function
-        self.iter_input_list = iter_input_list
 
         logging.debug("learning rate : " + str(self.lr))
         transform_to_tensor = transforms.Lambda(lambda lst: torch.tensor(lst))
@@ -137,9 +135,11 @@ class LogParser:
             prev_epoch, prev_loss = self.load_model(model, model_opt)
 
         if self.is_streaming:
-            train_dataloader = self.get_streaming_dataloader()
+            train_dataloader = self.get_streaming_dataloader(
+                iter_function, iter_input_list
+            )
             self.training_size = (
-                MAX_TRAINING_SAMPLE_SIZE // self.batch_size
+                len(iter_input_list) * MAX_TRAINING_SAMPLE_SIZE // self.batch_size
             )  # streaming dataloader has no len()
         else:
             train_dataloader, eval_dataloader = self.get_train_eval_dataloaders(
@@ -276,23 +276,21 @@ class LogParser:
 
         return anomaly_preds
 
-    def get_streaming_dataloader(
-        self,
-    ):
+    def get_streaming_dataloader(self, iter_function, iter_input_list):
         """
         the streaming dataloader simply incorporate the IterablePaddedDataset,
         the number of workers will depends on the amount of items in the iter_input_list
         """
         train_data = IterablePaddedDataset(
             tokenizer=self.tokenizer,
-            iter_function=self.iter_function,
-            iter_input_list=self.iter_input_list,
+            iter_function=iter_function,
+            iter_input_list=iter_input_list,
             pad_len=self.pad_len,
         )
         train_dataloader = DataLoader(
             train_data,
             batch_size=self.batch_size,
-            num_workers=len(self.iter_input_list),
+            num_workers=len(iter_input_list),
         )
         return train_dataloader
 
