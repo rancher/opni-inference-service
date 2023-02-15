@@ -492,6 +492,7 @@ class LogParser:
             tokens += batch.ntokens
 
             if i % self.step_size == 1:
+                logging.info(f" batch : {i}")
                 logging.info(f"valid words : {self.tokenizer.valid_words}")
                 elapsed = time.time() - start
                 training_progress = ((i / self.training_size) + epoch) / self.nr_epochs

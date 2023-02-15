@@ -18,11 +18,11 @@ from const import (
     ES_PASSWORD,
     ES_USERNAME,
     LOGGING_LEVEL,
-    MAX_TRAINING_SAMPLE_SIZE,
     S3_BUCKET,
     TRAINING_DATA_PATH,
 )
 from elasticsearch import Elasticsearch
+from elasticsearch.exceptions import NotFoundError
 from models.opnilog.masker import LogMasker
 from models.opnilog.opnilog_parser import LogParser
 from opni_nats import NatsWrapper
@@ -33,16 +33,7 @@ logger = logging.getLogger(__file__)
 logger.setLevel(LOGGING_LEVEL)
 masker = LogMasker()
 ANOMALY_KEYWORDS = ["fail", "error", "fatal"]
-
-
-# es_instance = AsyncElasticsearch(
-#     [ES_ENDPOINT],
-#     port=9200,
-#     http_compress=True,
-#     http_auth=(ES_USERNAME, ES_PASSWORD),
-#     verify_certs=False,
-#     use_ssl=True,
-# )
+MAX_TRAINING_SAMPLE_SIZE = 64000
 
 es_instance = Elasticsearch(
     [ES_ENDPOINT],
@@ -53,17 +44,49 @@ es_instance = Elasticsearch(
     use_ssl=True,
 )
 
+RETRY_LIMIT = 5
+MAX_FETCH_SIZE = 10000000
+
+
+def get_all_training_data(payload):
+    """
+    get training data from Opensearch and mask them.
+    """
+    res_data = []
+    query = payload["payload"]["query"]
+    max_size = payload["payload"]["max_size"]
+    num_logs_fetched = min(payload["payload"]["count"], max_size)
+    num_retries = 0
+    try:
+        current_page = es_instance.search(
+            index="logs", body=query, scroll="5m", size=10000
+        )
+    except Exception as e:
+        logging.error("Unable to query Opensearch {e}")
+        return res_data
+    while len(current_hit := current_page["hits"]["hits"]) > 0:
+        for h in current_hit:
+            res_data.append(h["_source"]["log"])
+            if len(res_data) == num_logs_fetched:
+                return res_data
+        while num_retries < RETRY_LIMIT:
+            try:
+                current_page = es_instance.scroll(
+                    scroll_id=current_page["_scroll_id"], scroll="5m"
+                )
+                break
+            except NotFoundError as e:
+                num_retries += 1
+    return res_data
+
 
 def yield_all_training_data(payload):
     """
     yield training data from Opensearch
     """
     query = payload["payload"]["query"]
-    max_size = 5000000  # payload["payload"]["max_size"]
     scroll_time = "5m"
-    num_logs_to_fetch = min(
-        (es_instance.count(index="logs", body=query))["count"], max_size
-    )
+    num_logs_to_fetch = min(payload["payload"]["count"], MAX_FETCH_SIZE)
     current_page = es_instance.search(
         index="logs", body=query, scroll=scroll_time, size=10000
     )
@@ -89,48 +112,6 @@ def yield_all_training_data(payload):
         )
 
 
-# async def get_all_training_data(payload):
-#     """
-#     get training data from Opensearch and mask them.
-#     """
-#     query = payload["payload"]["query"]
-#     max_size = 5000000  # payload["payload"]["max_size"]
-#     scroll_time = "5m"
-#     num_logs_to_fetch = min(
-#         (await es_instance.count(index="logs", body=query))["count"], max_size
-#     )
-#     current_page = await es_instance.search(
-#         index="logs", body=query, scroll=scroll_time, size=10000
-#     )
-#     logs_fetched = 0
-#     batch_data = []
-#     while (
-#         len(current_hit := current_page["hits"]["hits"]) > 0
-#         and num_logs_to_fetch - logs_fetched > 0
-#     ):
-#         for h in current_hit:
-#             batch_data.append(h["_source"]["log"])
-#             logs_fetched += 1
-#             if num_logs_to_fetch - logs_fetched <= 0:
-#                 break
-#         logger.warning(f"yielding data len of {len(batch_data)}")
-#         yield batch_data
-#         logger.warning(f" fected {logs_fetched} logs")
-#         del batch_data
-#         gc.collect()
-#         batch_data = []
-#         current_page = await es_instance.scroll(
-#             scroll_id=current_page["_scroll_id"], scroll=scroll_time
-#         )
-
-
-def batch_mask(lst):
-    s_time = time.time()
-    res = [masker.mask(l) for l in lst]
-    logger.warning(f"masked {len(lst)} logs in {time.time() - s_time} seconds")
-    return res
-
-
 def get_weights(data):
     """
     assign weights to masked dataset and make the distribution of different logs more balanced.
@@ -150,17 +131,16 @@ def get_weights(data):
 
 
 def mask_batch(payload):
+    """
+    the function that masks data from Opensearch and applies weighted random shuffle and yields each log.
+    """
     training_size = MAX_TRAINING_SAMPLE_SIZE
-    max_fetch_size = 5000000
-    query = payload["payload"]["query"]
-    num_logs_to_fetch = min(
-        (es_instance.count(index="logs", body=query))["count"], max_fetch_size
-    )
+    num_logs_to_fetch = min(payload["payload"]["count"], MAX_FETCH_SIZE)
 
     for batch in yield_all_training_data(payload):
 
-        batch_masked = batch_mask(batch)
-        # reduce batch_res accordingly,
+        batch_masked = [masker.mask(b) for b in batch]
+        # reduce batch_res accordingly using weighted random shuffle,
         weights = get_weights(batch_masked)
         if training_size < num_logs_to_fetch:
             size_reduce_to = int(training_size * len(batch) / num_logs_to_fetch)
@@ -188,49 +168,45 @@ async def train_opnilog_model(nw, s3_client, payload):
     await nw.connect()
     await nw.publish("model_update", json.dumps({"status": "training"}).encode())
     # Load the training data.
-
-    # try:
-    #     raw_texts = get_all_training_data(payload)
-    #     # texts = masking(texts)
-    #     texts = masking(raw_texts, payload)
-    # except Exception as e:
-    #     logging.error(f"Unable to load data. {e}")
-    #     return False
-
-    # try:
-    #     if not os.path.exists("output/"):
-    #         os.makedirs("output")
-    # except Exception as e:
-    #     logging.error("Unable to create output folder.")
-
-    nr_epochs = 1  # 3
-    # undersample if there are too many data, otherwise randomsample
-    # num_samples = (
-    #     MAX_TRAINING_SAMPLE_SIZE if len(texts) > MAX_TRAINING_SAMPLE_SIZE else 0
-    # )
-    num_samples = 0
-    # Check to see if the length of the training data is at least 1. Otherwise, return False.
-    # if len(texts) > 0:
-    if True:
+    training_method_threshold = 1000000
+    if payload["payload"]["count"] < training_method_threshold:
+        # download all data if the dataset size is small, otherwise streaming.
         try:
-            # tokenized = parser.tokenize_data(texts, is_training=True)
-            # parser.tokenizer.save_vocab()
-            # parser.train(
-            #     tokenized,
-            #     nr_epochs=nr_epochs,
-            #     num_samples=num_samples,
-            #     put_results=True,
-            # )
-            parser.train(
-                [],
-                nr_epochs=nr_epochs,
-                num_samples=num_samples,
-                put_results=True,
-                is_streaming=True,
-                iter_function=mask_batch,
-                iter_input_list=[payload, payload],
-            )
-            parser.tokenizer.save_vocab()
+            texts = get_all_training_data(payload)
+        except Exception as e:
+            logging.error(f"Unable to load data. {e}")
+            return False
+        nr_epochs = 3
+        # undersample if there are too many data, otherwise randomsample
+        num_samples = (
+            MAX_TRAINING_SAMPLE_SIZE if len(texts) > MAX_TRAINING_SAMPLE_SIZE else 0
+        )
+    else:
+        nr_epochs = 1
+        num_samples = 0
+    # Check to see if the length of the training data is at least 1. Otherwise, return False.
+    if payload["payload"]["count"] > 0:
+        try:
+            if payload["payload"]["count"] < training_method_threshold:
+                tokenized = parser.tokenize_data(texts, is_training=True)
+                parser.tokenizer.save_vocab()
+                parser.train(
+                    tokenized,
+                    nr_epochs=nr_epochs,
+                    num_samples=num_samples,
+                    put_results=True,
+                )
+            else:
+                parser.train(
+                    [],
+                    nr_epochs=nr_epochs,
+                    num_samples=num_samples,
+                    put_results=True,
+                    is_streaming=True,
+                    iter_function=mask_batch,
+                    iter_input_list=[payload, payload],
+                )
+                parser.tokenizer.save_vocab()
             all_files = os.listdir(save_path)
             if DEFAULT_MODEL_NAME in all_files and DEFAULT_VOCAB_NAME in all_files:
                 logger.debug("Completed training model")

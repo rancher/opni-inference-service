@@ -82,7 +82,7 @@ class OpniLogPredictor:
 
         output = []
         for log in logs:
-            tokens = self.parser.tokenize_data([log], isTrain=False)
+            tokens = self.parser.tokenize_data([log], is_training=False)
             if len(tokens[0]) < MIN_LOG_TOKENS:
                 output.append(1)
             else:
