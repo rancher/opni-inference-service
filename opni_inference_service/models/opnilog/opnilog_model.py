@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # Standard Library
 import copy
-import logging
 import math
 from collections import defaultdict
 
@@ -299,39 +298,35 @@ class IterablePaddedDataset(IterableDataset):
         worker_info = torch.utils.data.get_worker_info()
         if worker_info is None or worker_info.num_workers != len(self.iter_input_list):
             raise ValueError("Number of workers doesn't match.")
-        # res = self._get_padded_data(
-        #     self.iter_function(self.iter_input_list[worker_info.id])
-        # )
-        # yield from res
         yield from self.iter_function(self.iter_input_list[worker_info.id])
 
-    def _get_padded_data(self, data_stream):
-        for raw_data in data_stream:
-            data = self.tokenizer.tokenize_data(raw_data, isTrain=True)
-            logging.info(f"worker valod tokens : {self.tokenizer.valid_words}")
-            pad_len = self.pad_len
-            d = self.c(data)
-            npd = np.asarray(d)
-            pd = np.zeros(shape=(len(d), pad_len))
-            for n in range(len(d)):
-                if len(npd[n]) > pad_len:
-                    pd[n] = np.asarray(npd[n][:pad_len])
-                else:
-                    pd[n][: len(npd[n])] = np.asarray(npd[n])
-            pd = pd.astype("long")
-            yield from self._prepare_metadata(pd, d)
+    # def _get_padded_data(self, data_stream):
+    #     for raw_data in data_stream:
+    #         data = self.tokenizer.tokenize_data(raw_data, isTrain=True)
+    #         logging.info(f"worker valod tokens : {self.tokenizer.valid_words}")
+    #         pad_len = self.pad_len
+    #         d = self.c(data)
+    #         npd = np.asarray(d)
+    #         pd = np.zeros(shape=(len(d), pad_len))
+    #         for n in range(len(d)):
+    #             if len(npd[n]) > pad_len:
+    #                 pd[n] = np.asarray(npd[n][:pad_len])
+    #             else:
+    #                 pd[n][: len(npd[n])] = np.asarray(npd[n])
+    #         pd = pd.astype("long")
+    #         yield from self._prepare_metadata(pd, d)
 
-    def _prepare_metadata(self, padded_data, data):
-        for index, src in enumerate(padded_data):
+    # def _prepare_metadata(self, padded_data, data):
+    #     for index, src in enumerate(padded_data):
 
-            offset = 1
-            data_len = (
-                len(data[index]) - 1
-                if len(data[index]) < self.pad_len
-                else self.pad_len - 1
-            )
+    #         offset = 1
+    #         data_len = (
+    #             len(data[index]) - 1
+    #             if len(data[index]) < self.pad_len
+    #             else self.pad_len - 1
+    #         )
 
-            yield src, offset, data_len, index
+    #         yield src, offset, data_len, index
 
 
 class MaskedDataset(Dataset):

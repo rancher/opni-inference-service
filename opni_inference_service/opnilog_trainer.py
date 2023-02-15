@@ -54,9 +54,9 @@ es_instance = Elasticsearch(
 )
 
 
-def get_all_training_data(payload):
+def yield_all_training_data(payload):
     """
-    get training data from Opensearch and mask them.
+    yield training data from Opensearch
     """
     query = payload["payload"]["query"]
     max_size = 5000000  # payload["payload"]["max_size"]
@@ -125,7 +125,6 @@ def get_all_training_data(payload):
 
 
 def batch_mask(lst):
-    # masker = LogMasker()
     s_time = time.time()
     res = [masker.mask(l) for l in lst]
     logger.warning(f"masked {len(lst)} logs in {time.time() - s_time} seconds")
@@ -133,6 +132,9 @@ def batch_mask(lst):
 
 
 def get_weights(data):
+    """
+    assign weights to masked dataset and make the distribution of different logs more balanced.
+    """
     s1 = time.time()
     unique_sample_counter = defaultdict(int)
     for s in data:
@@ -147,21 +149,18 @@ def get_weights(data):
     return weights
 
 
-def masking(payload):
+def mask_batch(payload):
     training_size = MAX_TRAINING_SAMPLE_SIZE
-    max_size = 5000000
+    max_fetch_size = 5000000
     query = payload["payload"]["query"]
     num_logs_to_fetch = min(
-        (es_instance.count(index="logs", body=query))["count"], max_size
+        (es_instance.count(index="logs", body=query))["count"], max_fetch_size
     )
-    # Standard Library
 
-    for batch in get_all_training_data(payload):
+    for batch in yield_all_training_data(payload):
 
-        # logging.warning(f"getting masking data len of {len(batch_masked)}")
-        # yield batch_res
         batch_masked = batch_mask(batch)
-        # reduce batch_res accordingly
+        # reduce batch_res accordingly,
         weights = get_weights(batch_masked)
         if training_size < num_logs_to_fetch:
             size_reduce_to = int(training_size * len(batch) / num_logs_to_fetch)
@@ -176,53 +175,6 @@ def masking(payload):
         del batch_masked
         del reduced_batch
         gc.collect()
-
-
-# async def masking(raw_data, payload):
-#     training_size = 8192 * 4 * 4
-#     max_size = 5000000
-#     query = payload["payload"]["query"]
-#     num_logs_to_fetch = min(
-#         (await es_instance.count(index="logs", body=query))["count"], max_size
-#     )
-#     # Standard Library
-#     from multiprocessing import Pool
-
-#     n_worker = 3
-#     res = []
-#     with Pool(3) as p:
-#         async for batch in raw_data:
-
-#             s0 = time.time()
-#             batch_masked = []
-#             a_res = p.map(batch_mask, np.array_split(batch, n_worker))
-#             for a in a_res:
-#                 batch_masked.extend(a)
-#             # logging.warning(f"getting masking data len of {len(batch_masked)}")
-#             # yield batch_res
-#             # batch_masked = batch_mask(batch)
-#             # reduce batch_res accordingly
-#             s1 = time.time()
-# weights = get_weights(batch_masked)
-# if training_size < num_logs_to_fetch:
-#     size_reduce_to = int(training_size * len(batch) / num_logs_to_fetch)
-#     reduced_batch = random.choices(
-#         population=batch_masked, weights=weights, k=size_reduce_to
-#     )
-#     logger.warning(f"size reduced from {len(batch)} to {size_reduce_to}")
-# else:
-#     reduced_batch = batch_masked
-
-#             res.extend(reduced_batch)
-#             s2 = time.time()
-#             logger.warning(
-#                 f"total batch time : {s2 - s0}, while weights assignment time : {s1 - s0}"
-#             )
-#             del batch_masked
-#             del reduced_batch
-#             gc.collect()
-#     logger.warning(f"total size : {len(res)}")
-#     return res
 
 
 async def train_opnilog_model(nw, s3_client, payload):
@@ -261,7 +213,7 @@ async def train_opnilog_model(nw, s3_client, payload):
     # if len(texts) > 0:
     if True:
         try:
-            # tokenized = parser.tokenize_data(texts, isTrain=True)
+            # tokenized = parser.tokenize_data(texts, is_training=True)
             # parser.tokenizer.save_vocab()
             # parser.train(
             #     tokenized,
@@ -275,9 +227,10 @@ async def train_opnilog_model(nw, s3_client, payload):
                 num_samples=num_samples,
                 put_results=True,
                 is_streaming=True,
-                iter_function=masking,
-                iter_input_list=[payload],
+                iter_function=mask_batch,
+                iter_input_list=[payload, payload],
             )
+            parser.tokenizer.save_vocab()
             all_files = os.listdir(save_path)
             if DEFAULT_MODEL_NAME in all_files and DEFAULT_VOCAB_NAME in all_files:
                 logger.debug("Completed training model")

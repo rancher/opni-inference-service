@@ -160,6 +160,7 @@ class LogParser:
                 put_results=put_results,
                 is_streaming=is_streaming,
             )
+            logging.info(f"worker valid tokens : {self.tokenizer.valid_words}")
         end_time = time.time()
         if put_results:
             put_model_stats(
@@ -173,6 +174,7 @@ class LogParser:
         self.save_model(model=model, model_opt=model_opt, epoch=self.nr_epochs, loss=0)
 
         if not self.is_streaming:
+            # eval in validation dataset
             self.init_inference()
             eval_predictions = self.predict(eval_dataloader, False)
             num_predictions = len(eval_predictions)
@@ -277,6 +279,10 @@ class LogParser:
     def get_streaming_dataloader(
         self,
     ):
+        """
+        the streaming dataloader simply incorporate the IterablePaddedDataset,
+        the number of workers will depends on the amount of items in the iter_input_list
+        """
         train_data = IterablePaddedDataset(
             tokenizer=self.tokenizer,
             iter_function=self.iter_function,
@@ -286,7 +292,7 @@ class LogParser:
         train_dataloader = DataLoader(
             train_data,
             batch_size=self.batch_size,
-            num_workers=1,
+            num_workers=len(self.iter_input_list),
         )
         return train_dataloader
 
@@ -342,8 +348,8 @@ class LogParser:
             logging.error("Unable to fetch data.")
             return []
 
-    def tokenize_data(self, input_text, isTrain=False):
-        return self.tokenizer.tokenize_data(input_text, isTrain=isTrain)
+    def tokenize_data(self, input_text, is_training=False):
+        return self.tokenizer.tokenize_data(input_text, is_training=is_training)
 
     def log_to_dataframe(self, windows_folder_path):
         """Function to transform log file to dataframe"""
@@ -400,9 +406,11 @@ class LogParser:
                 idxs.append(dg)
         return torch.stack(src), torch.stack(trg), torch.Tensor(idxs)
 
-    def _get_padded_data(self, raw_data):
-        data = self.tokenizer.tokenize_data(raw_data, isTrain=True)
-        logging.info(f"worker valid tokens : {self.tokenizer.valid_words}")
+    def get_padded_data(self, raw_data, is_training=True):
+        """
+        tokenize the streaming data and add padding tokens to the pad_len. Only invoked in streaming.
+        """
+        data = self.tokenizer.tokenize_data(raw_data, is_training=is_training)
         pad_len = self.pad_len
         d = deepcopy(data)
         npd = np.asarray(d)
@@ -413,10 +421,12 @@ class LogParser:
             else:
                 pd[n][: len(npd[n])] = np.asarray(npd[n])
         pd = pd.astype("long")
-        # yield from self._prepare_metadata(pd, d)
-        return self._prepare_metadata(pd, d)
+        return self.prepare_metadata(pd, d)
 
-    def _prepare_metadata(self, padded_data, data):
+    def prepare_metadata(self, padded_data, data):
+        """
+        prepare metadata for do_mask(), includes the source tokens, origin data_len, its indices and offsets.
+        """
         srcs = []
         offsets = []
         data_lens = []
@@ -430,7 +440,6 @@ class LogParser:
                 else self.pad_len - 1
             )
 
-            # yield src, offset, data_len, index
             srcs.append(src)
             offsets.append(offset)
             data_lens.append(data_len)
@@ -459,7 +468,7 @@ class LogParser:
         tokens = 0
         for i, batch in enumerate(dataloader):
             if is_streaming:
-                batch = self._get_padded_data(batch)
+                batch = self.get_padded_data(batch, is_training=True)
             b_input, b_labels, _ = self.do_mask(batch)
             batch = Batch(b_input, b_labels, 0)
             if using_GPU:
