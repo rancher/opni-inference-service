@@ -160,7 +160,6 @@ class LogParser:
                 put_results=put_results,
                 is_streaming=is_streaming,
             )
-            logging.info(f"worker valid tokens : {self.tokenizer.valid_words}")
         end_time = time.time()
         if put_results:
             put_model_stats(
@@ -490,8 +489,6 @@ class LogParser:
             tokens += batch.ntokens
 
             if i % self.step_size == 1:
-                logging.info(f" batch : {i}")
-                logging.info(f"valid words : {self.tokenizer.valid_words}")
                 elapsed = time.time() - start
                 training_progress = ((i / self.training_size) + epoch) / self.nr_epochs
                 total_time_taken = time.time() - training_start_time

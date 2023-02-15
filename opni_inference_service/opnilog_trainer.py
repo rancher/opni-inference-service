@@ -110,11 +110,7 @@ def yield_all_training_data(payload):
             logs_fetched += 1
             if num_logs_to_fetch - logs_fetched <= 0:
                 break
-        logger.warning(
-            f"yielding data len of {len(batch_data)}, scroll_id : {current_page['_scroll_id']}"
-        )
         yield batch_data
-        logger.warning(f" fected {logs_fetched} logs")
         del batch_data
         gc.collect()
         batch_data = []
@@ -137,7 +133,6 @@ def get_weights(data):
         unique_sample_counter[key] = np.sqrt(count) / count  # the sqrt weight
 
     weights = np.array([unique_sample_counter[str(s)] for s in data])
-    logger.warning(f"weights in {time.time() - s1}")
     return weights
 
 
@@ -161,7 +156,6 @@ def mask_batch(payload):
             reduced_batch = random.choices(
                 population=batch_masked, weights=weights, k=size_reduce_to
             )
-            logger.warning(f"size reduced from {len(batch)} to {size_reduce_to}")
         else:
             reduced_batch = batch_masked
 
@@ -218,7 +212,7 @@ async def train_opnilog_model(nw, s3_client, payload):
                     put_results=True,
                     is_streaming=True,
                     iter_function=mask_batch,
-                    iter_input_list=[payload, payload],
+                    iter_input_list=[payload],  # should be payloads in future
                 )
                 parser.tokenizer.save_vocab()
             all_files = os.listdir(save_path)

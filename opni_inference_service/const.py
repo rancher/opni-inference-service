@@ -34,7 +34,7 @@ DEFAULT_MODELREADY_PAYLOAD = {
 TRAINING_DATA_PATH = os.getenv(
     "TRAINING_DATA_PATH", "/var/opni-data"
 )  # only used by training
-MAX_TRAINING_SAMPLE_SIZE = 131072
+MAX_TRAINING_SAMPLE_SIZE = 128000
 
 
 class HyperParameters:
