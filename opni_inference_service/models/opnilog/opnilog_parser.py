@@ -8,7 +8,7 @@ from copy import deepcopy
 import pandas as pd
 import torch
 import torch.nn as nn
-from const import MAX_TRAINING_SAMPLE_SIZE, THRESHOLD
+from const import THRESHOLD
 from models.opnilog.opnilog_model import *  # should improve this
 from models.opnilog.opnilog_tokenizer import LogTokenizer
 from torchvision import transforms
@@ -136,16 +136,16 @@ class LogParser:
 
         if self.is_streaming:
             train_dataloader = self.get_streaming_dataloader(
-                iter_function, iter_input_list
+                iter_function, iter_input_list, self.num_samples
             )
-            self.training_size = (
-                len(iter_input_list) * MAX_TRAINING_SAMPLE_SIZE // self.batch_size
+            self.training_batch_size = (
+                self.num_samples // self.batch_size
             )  # streaming dataloader has no len()
         else:
             train_dataloader, eval_dataloader = self.get_train_eval_dataloaders(
                 data_tokenized, transform_to_tensor
             )
-            self.training_size = len(train_dataloader)
+            self.training_batch_size = len(train_dataloader)
         ## train if no model
         model.train()
         logging.info(f"#######Training Model within {self.nr_epochs} epochs...######")
@@ -275,21 +275,23 @@ class LogParser:
 
         return anomaly_preds
 
-    def get_streaming_dataloader(self, iter_function, iter_input_list):
+    def get_streaming_dataloader(self, iter_function, iter_input_list, num_samples):
         """
         the streaming dataloader simply incorporate the IterablePaddedDataset,
         the number of workers will depends on the amount of items in the iter_input_list
         """
+        num_workers = len(iter_input_list)
         train_data = IterablePaddedDataset(
             tokenizer=self.tokenizer,
             iter_function=iter_function,
             iter_input_list=iter_input_list,
+            sample_per_worker=(self.num_samples // num_workers),
             pad_len=self.pad_len,
         )
         train_dataloader = DataLoader(
             train_data,
             batch_size=self.batch_size,
-            num_workers=len(iter_input_list),
+            num_workers=num_workers,
         )
         return train_dataloader
 
@@ -490,13 +492,15 @@ class LogParser:
 
             if i % self.step_size == 1:
                 elapsed = time.time() - start
-                training_progress = ((i / self.training_size) + epoch) / self.nr_epochs
+                training_progress = (
+                    (i / self.training_batch_size) + epoch
+                ) / self.nr_epochs
                 total_time_taken = time.time() - training_start_time
                 remaining_time = (
                     total_time_taken // training_progress
                 ) - total_time_taken
                 logging.info(
-                    f"| Epoch: {epoch} | Total Progress: {(training_progress * 100):.2f}% | Training Time Taken: {total_time_taken:.2f}s | ETC: {(remaining_time):.2f}s | Epoch Step: {i}/{self.training_size} | Loss: {(loss / batch.ntokens):.4f} | Tokens per Sec: {(tokens / elapsed):.2f} |"
+                    f"| Epoch: {epoch} | Total Progress: {(training_progress * 100):.2f}% | Training Time Taken: {total_time_taken:.2f}s | ETC: {(remaining_time):.2f}s | Epoch Step: {i}/{self.training_batch_size} | Loss: {(loss / batch.ntokens):.4f} | Tokens per Sec: {(tokens / elapsed):.2f} |"
                 )
                 if put_results:
                     put_model_stats(

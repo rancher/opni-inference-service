@@ -6,7 +6,6 @@ import logging
 import os
 import random
 import shutil
-import time
 from collections import defaultdict
 
 # Third Party
@@ -123,7 +122,6 @@ def get_weights(data):
     """
     assign weights to masked dataset and make the distribution of different logs more balanced.
     """
-    s1 = time.time()
     unique_sample_counter = defaultdict(int)
     for s in data:
         unique_sample_counter[str(s)] += 1
@@ -136,14 +134,13 @@ def get_weights(data):
     return weights
 
 
-def mask_batch(payload):
+def mask_batch(payload, sample_size):
     """
     the function that masks data from Opensearch and applies weighted random shuffle and yields each log.
     """
-    training_size = MAX_TRAINING_SAMPLE_SIZE
     num_logs_to_fetch = min(payload["payload"]["count"], MAX_FETCH_SIZE)
     logger.warning(
-        f" num logs to fetch : {num_logs_to_fetch}, training size : {training_size}"
+        f" num logs to fetch : {num_logs_to_fetch}, worker sample size : {sample_size}"
     )
 
     for batch in yield_all_training_data(payload):
@@ -151,8 +148,8 @@ def mask_batch(payload):
         batch_masked = [masker.mask(b) for b in batch]
         # reduce batch_res accordingly using weighted random shuffle,
         weights = get_weights(batch_masked)
-        if training_size < num_logs_to_fetch:
-            size_reduce_to = int(training_size * len(batch) / num_logs_to_fetch)
+        if sample_size < num_logs_to_fetch:
+            size_reduce_to = int(sample_size * len(batch) / num_logs_to_fetch)
             reduced_batch = random.choices(
                 population=batch_masked, weights=weights, k=size_reduce_to
             )
@@ -191,7 +188,9 @@ async def train_opnilog_model(nw, s3_client, payload):
         )
     else:
         nr_epochs = 1
-        num_samples = 0
+        num_samples = (
+            MAX_TRAINING_SAMPLE_SIZE * 3
+        )  # 1 epoch so num_samples has to time 3
     # Check to see if the length of the training data is at least 1. Otherwise, return False.
     if payload["payload"]["count"] > 0:
         try:
