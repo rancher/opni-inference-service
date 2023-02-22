@@ -134,7 +134,7 @@ def get_weights(data):
     return weights
 
 
-def mask_batch(payload, sample_size):
+def preprocess_batch(payload, sample_size):
     """
     the function that masks data from Opensearch and applies weighted random shuffle and yields each log.
     """
@@ -210,7 +210,7 @@ async def train_opnilog_model(nw, s3_client, payload):
                     num_samples=num_samples,
                     put_results=True,
                     is_streaming=True,
-                    iter_function=mask_batch,
+                    iter_function=preprocess_batch,
                     iter_input_list=[payload],  # should be payloads in future
                 )
                 parser.tokenizer.save_vocab()
