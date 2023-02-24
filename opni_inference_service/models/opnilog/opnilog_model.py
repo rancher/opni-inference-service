@@ -291,7 +291,6 @@ class IterablePaddedDataset(IterableDataset):
         tokenizer,
         iter_function,
         iter_input_list: list,
-        sample_per_worker: int,
         pad_len=64,
     ):
         super().__init__()
@@ -299,16 +298,13 @@ class IterablePaddedDataset(IterableDataset):
         self.tokenizer = tokenizer
         self.iter_function = iter_function
         self.iter_input_list = iter_input_list
-        self.sample_per_worker = sample_per_worker
         self.pad_len = pad_len
 
     def __iter__(self):
         worker_info = torch.utils.data.get_worker_info()
         if worker_info is None or worker_info.num_workers != len(self.iter_input_list):
             raise ValueError("Number of workers doesn't match.")
-        yield from self.iter_function(
-            self.iter_input_list[worker_info.id], self.sample_per_worker
-        )
+        yield from self.iter_function(self.iter_input_list[worker_info.id])
 
 
 class MaskedDataset(Dataset):

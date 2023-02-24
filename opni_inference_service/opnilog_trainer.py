@@ -1,5 +1,6 @@
 # Standard Library
 import asyncio
+import copy
 import gc
 import json
 import logging
@@ -45,6 +46,7 @@ es_instance = Elasticsearch(
 
 RETRY_LIMIT = 5
 MAX_FETCH_SIZE = 10000000
+NUM_WORKER = 3
 
 
 def get_all_training_data(payload):
@@ -94,21 +96,15 @@ def yield_all_training_data(payload):
 
     query = payload["payload"]["query"]
     scroll_time = "5m"
-    num_logs_to_fetch = min(payload["payload"]["count"], MAX_FETCH_SIZE)
     current_page = es_instance.search(
         index="logs", body=query, scroll=scroll_time, size=10000
     )
     logs_fetched = 0
     batch_data = []
-    while (
-        len(current_hit := current_page["hits"]["hits"]) > 0
-        and num_logs_to_fetch - logs_fetched > 0
-    ):
+    while len(current_hit := current_page["hits"]["hits"]) > 0:
         for h in current_hit:
             batch_data.append(h["_source"]["log"])
             logs_fetched += 1
-            if num_logs_to_fetch - logs_fetched <= 0:
-                break
         yield batch_data
         del batch_data
         gc.collect()
@@ -134,22 +130,22 @@ def get_weights(data):
     return weights
 
 
-def preprocess_batch(payload, sample_size):
+def preprocess_batch(payload):
     """
-    the function that masks data from Opensearch and applies weighted random shuffle and yields each log.
+    the function that:
+    1. masks data from Opensearch with Opni's custom masker
+    2. applies weighted random shuffle
+    3. yields each log.
     """
-    num_logs_to_fetch = min(payload["payload"]["count"], MAX_FETCH_SIZE)
-    logger.warning(
-        f" num logs to fetch : {num_logs_to_fetch}, worker sample size : {sample_size}"
-    )
+    downsample_ratio = payload["payload"]["downsample_ratio"]
 
     for batch in yield_all_training_data(payload):
 
         batch_masked = [masker.mask(b) for b in batch]
         # reduce batch_res accordingly using weighted random shuffle,
         weights = get_weights(batch_masked)
-        if sample_size < num_logs_to_fetch:
-            size_reduce_to = int(sample_size * len(batch) / num_logs_to_fetch)
+        if downsample_ratio < 1:
+            size_reduce_to = int(downsample_ratio * len(batch))
             reduced_batch = random.choices(
                 population=batch_masked, weights=weights, k=size_reduce_to
             )
@@ -160,6 +156,34 @@ def preprocess_batch(payload, sample_size):
         del batch_masked
         del reduced_batch
         gc.collect()
+
+
+def split_up_payload_query(payload, num_samples: int):
+    """
+    split payload query into NUM_WORKER queries
+    """
+    downsample_ratio = num_samples / payload["payload"]["count"]
+    if NUM_WORKER == 1:
+        payload["payload"]["downsample_ratio"] = downsample_ratio
+        return [payload]
+    res_payload = []
+
+    start_ts = payload["payload"]["query"]["query"]["bool"]["filter"][0]["range"][
+        "time"
+    ]["gte"]
+    end_ts = payload["payload"]["query"]["query"]["bool"]["filter"][0]["range"]["time"][
+        "lte"
+    ]
+    ts_step = (end_ts - start_ts) // NUM_WORKER
+    for i in range(NUM_WORKER):
+        p = copy.deepcopy(payload)
+        p["payload"]["query"]["query"]["bool"]["filter"][0]["range"]["time"] = {
+            "gte": start_ts + i * ts_step,
+            "lte": start_ts + (i + 1) * ts_step,
+        }
+        p["payload"]["downsample_ratio"] = downsample_ratio
+        res_payload.append(p)
+    return res_payload
 
 
 async def train_opnilog_model(nw, s3_client, payload):
@@ -211,7 +235,7 @@ async def train_opnilog_model(nw, s3_client, payload):
                     put_results=True,
                     is_streaming=True,
                     iter_function=preprocess_batch,
-                    iter_input_list=[payload],  # should be payloads in future
+                    iter_input_list=split_up_payload_query(payload, num_samples),
                 )
                 parser.tokenizer.save_vocab()
             all_files = os.listdir(save_path)

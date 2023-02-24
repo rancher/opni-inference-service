@@ -136,7 +136,7 @@ class LogParser:
 
         if self.is_streaming:
             train_dataloader = self.get_streaming_dataloader(
-                iter_function, iter_input_list, self.num_samples
+                iter_function, iter_input_list
             )
             self.training_batch_size = (
                 self.num_samples // self.batch_size
@@ -275,7 +275,7 @@ class LogParser:
 
         return anomaly_preds
 
-    def get_streaming_dataloader(self, iter_function, iter_input_list, num_samples):
+    def get_streaming_dataloader(self, iter_function, iter_input_list):
         """
         the streaming dataloader simply incorporate the IterablePaddedDataset,
         the number of workers will depends on the amount of items in the iter_input_list
@@ -285,7 +285,6 @@ class LogParser:
             tokenizer=self.tokenizer,
             iter_function=iter_function,
             iter_input_list=iter_input_list,
-            sample_per_worker=(self.num_samples // num_workers),
             pad_len=self.pad_len,
         )
         train_dataloader = DataLoader(
