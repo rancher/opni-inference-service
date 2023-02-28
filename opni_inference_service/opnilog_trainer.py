@@ -198,10 +198,12 @@ async def train_opnilog_model(nw, s3_client, payload):
     await nw.publish("model_update", json.dumps({"status": "training"}).encode())
     # Load the training data.
     training_method_threshold = 1000000
-    if payload["payload"]["count"] < training_method_threshold:
+    log_count = payload["payload"]["count"]
+    if log_count < training_method_threshold:
         # download all data if the dataset size is small, otherwise streaming.
         try:
             texts = get_all_training_data(payload)
+            masked_logs = [masker.mask(log) for log in texts]
         except Exception as e:
             logging.error(f"Unable to load data. {e}")
             return False
@@ -216,10 +218,10 @@ async def train_opnilog_model(nw, s3_client, payload):
             MAX_TRAINING_SAMPLE_SIZE * 3
         )  # 1 epoch so num_samples has to time 3
     # Check to see if the length of the training data is at least 1. Otherwise, return False.
-    if payload["payload"]["count"] > 0:
+    if log_count > 0:
         try:
-            if payload["payload"]["count"] < training_method_threshold:
-                tokenized = parser.tokenize_data(texts, is_training=True)
+            if log_count < training_method_threshold:
+                tokenized = parser.tokenize_data(masked_logs, is_training=True)
                 parser.tokenizer.save_vocab()
                 parser.train(
                     tokenized,
