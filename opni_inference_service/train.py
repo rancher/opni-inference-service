@@ -32,7 +32,7 @@ def train_opnilog_model(training_file, duplicate=1):
     parser = LogParser()
     texts = load_text(training_file, duplicate)
 
-    tokenized = parser.tokenize_data(texts, isTrain=True)
+    tokenized = parser.tokenize_data(texts, is_training=True)
     parser.tokenizer.save_vocab()
     parser.train(tokenized, nr_epochs=nr_epochs, num_samples=num_samples)
 

@@ -18,7 +18,7 @@ def init_model(save_path="output/"):
 
 
 def predict(parser, texts):
-    tokenized = parser.tokenize_data(texts, isTrain=False)
+    tokenized = parser.tokenize_data(texts, is_training=False)
     preds = parser.predict(tokenized)
     return preds
 

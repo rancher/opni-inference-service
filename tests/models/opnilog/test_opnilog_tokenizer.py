@@ -41,7 +41,7 @@ def test_is_num_there(tokenizer):
 
 
 def test_tokenize(tokenizer):
-    res = tokenizer.tokenize("<CLS> test", isTrain=True)
+    res = tokenizer.tokenize("<CLS> test", is_training=True)
     assert res == [1, 5]
     assert tokenizer.word2index["test"] == 5
     assert tokenizer.index2word[5] == "test"
