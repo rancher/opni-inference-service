@@ -215,8 +215,8 @@ async def train_opnilog_model(nw, s3_client, payload):
     else:
         nr_epochs = 1
         num_samples = (
-            MAX_TRAINING_SAMPLE_SIZE * 3
-        )  # 1 epoch so num_samples has to time 3
+            MAX_TRAINING_SAMPLE_SIZE * 4
+        )  # 1 epoch so num_samples has to time 4
     # Check to see if the length of the training data is at least 1. Otherwise, return False.
     if log_count > 0:
         try:
