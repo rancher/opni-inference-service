@@ -443,10 +443,10 @@ class LogParser:
             data_lens.append(data_len)
             indices.append(index)
         return (
-            torch.tensor(srcs),
-            torch.tensor(offsets),
-            torch.tensor(data_lens),
-            torch.tensor(indices),
+            torch.tensor(np.array(srcs)),
+            torch.tensor(np.array(offsets)),
+            torch.tensor(np.array(data_lens)),
+            torch.tensor(np.array(indices)),
         )
 
     def run_epoch(
