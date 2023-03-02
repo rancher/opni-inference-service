@@ -71,7 +71,7 @@ class LogTokenizer:
         digits = [i.isdigit() for i in s]
         return True if sum(digits) > 1 else False
 
-    def tokenize(self, sent, isTrain):
+    def tokenize(self, sent, is_training):
         tokens = sent.split(" ")
         valid_tokens = []
         for t in tokens:
@@ -85,10 +85,18 @@ class LogTokenizer:
             if self.is_num_there(word):
                 word = "<NUM>"
 
-            if isTrain:
+            if is_training:
                 self.addWord(word)
             if word in self.word2index:
                 res.append(self.word2index[word])
             else:
                 res.append(self.word2index["<UNK>"])
         return res
+
+    def tokenize_data(self, input_text, is_training=False):
+        data_tokenized = []
+        for i in range(0, len(input_text)):
+            text_i = input_text[i].lower()  ## lowercase before tokenization
+            tokenized = self.tokenize("<CLS> " + text_i, is_training=is_training)
+            data_tokenized.append(tokenized)
+        return data_tokenized

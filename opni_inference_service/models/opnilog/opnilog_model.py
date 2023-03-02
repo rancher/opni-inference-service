@@ -13,6 +13,7 @@ from torch.autograd import Variable
 from torch.utils.data import (
     DataLoader,
     Dataset,
+    IterableDataset,
     RandomSampler,
     SequentialSampler,
     TensorDataset,
@@ -284,17 +285,39 @@ class Batch:
         return tgt_mask
 
 
+class IterablePaddedDataset(IterableDataset):
+    def __init__(
+        self,
+        tokenizer,
+        iter_function,
+        iter_input_list: list,
+        pad_len=64,
+    ):
+        super().__init__()
+        self.c = copy.deepcopy
+        self.tokenizer = tokenizer
+        self.iter_function = iter_function
+        self.iter_input_list = iter_input_list
+        self.pad_len = pad_len
+
+    def __iter__(self):
+        worker_info = torch.utils.data.get_worker_info()
+        if worker_info is None or worker_info.num_workers != len(self.iter_input_list):
+            raise ValueError("Number of workers doesn't match.")
+        yield from self.iter_function(self.iter_input_list[worker_info.id])
+
+
 class MaskedDataset(Dataset):
     def __init__(
-        self, data, tokenizer, mask_percentage=0.2, transforms=None, pad=0, pad_len=64
+        self, data, tokenizer, mask_percentage=0.2, transforms=None, pad_len=64
     ):
         self.c = copy.deepcopy
 
         self.data = data
         self.padded_data = self._get_padded_data(data, pad_len)
         self.mask_percentage = mask_percentage
-        self.transforms = transforms
-        self.pad = pad
+        # self.transforms = transforms
+        self.transforms = None
         self.pad_len = pad_len
         self.tokenizer = tokenizer
 
@@ -313,21 +336,6 @@ class MaskedDataset(Dataset):
         weights = np.array([unique_sample_counter[str(s)] for s in self.data])
         return weights
 
-    @staticmethod
-    def subsequent_mask(size, trg):
-        "Mask out subsequent positions."
-        attn_shape = (size, size)
-        subsequent_mask = np.triu(np.ones(attn_shape), k=1).astype("uint8")
-        t = torch.from_numpy(subsequent_mask) == 0
-
-        return t & trg
-
-    def make_std_mask(self, trg):
-        "Create a mask to hide padding and future words."
-        trg_mask = trg != self.pad
-        trg_mask = self.subsequent_mask(trg.shape[0], trg_mask)
-        return trg_mask
-
     def _get_padded_data(self, data, pad_len):
         d = self.c(data)
         npd = np.asarray(d)
@@ -343,8 +351,6 @@ class MaskedDataset(Dataset):
         return pd
 
     def __getitem__(self, index):
-        masked_data = self.c(self.padded_data[index])
-        # print(masked_data)
         src = self.padded_data[index]
 
         offset = 1

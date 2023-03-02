@@ -1,11 +1,16 @@
 # Standard Library
 import asyncio
+import copy
+import gc
 import json
 import logging
 import os
+import random
 import shutil
+from collections import defaultdict
 
 # Third Party
+import numpy as np
 from const import (
     DEFAULT_MODEL_NAME,
     DEFAULT_VOCAB_NAME,
@@ -13,26 +18,24 @@ from const import (
     ES_PASSWORD,
     ES_USERNAME,
     LOGGING_LEVEL,
+    MAX_TRAINING_SAMPLE_SIZE,
     S3_BUCKET,
     TRAINING_DATA_PATH,
 )
-from elasticsearch import AsyncElasticsearch
+from elasticsearch import Elasticsearch
 from elasticsearch.exceptions import NotFoundError
-from opni_nats import NatsWrapper
-from utils import get_s3_client, s3_setup
-
-# Local
 from models.opnilog.masker import LogMasker
 from models.opnilog.opnilog_parser import LogParser
+from opni_nats import NatsWrapper
+from utils import get_s3_client, s3_setup
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__file__)
 logger.setLevel(LOGGING_LEVEL)
 masker = LogMasker()
 ANOMALY_KEYWORDS = ["fail", "error", "fatal"]
-MAX_TRAINING_SAMPLE_SIZE = 64000
 
-es_instance = AsyncElasticsearch(
+es_instance = Elasticsearch(
     [ES_ENDPOINT],
     port=9200,
     http_compress=True,
@@ -42,21 +45,21 @@ es_instance = AsyncElasticsearch(
 )
 
 RETRY_LIMIT = 5
+MAX_FETCH_SIZE = 10000000
+NUM_WORKER = 3
 
 
-async def get_all_training_data(payload):
+def get_all_training_data(payload):
     """
     get training data from Opensearch and mask them.
     """
     res_data = []
     query = payload["payload"]["query"]
     max_size = payload["payload"]["max_size"]
-    num_logs_fetched = min(
-        (await es_instance.count(index="logs", body=query))["count"], max_size
-    )
+    num_logs_fetched = min(payload["payload"]["count"], max_size)
     num_retries = 0
     try:
-        current_page = await es_instance.search(
+        current_page = es_instance.search(
             index="logs", body=query, scroll="5m", size=10000
         )
     except Exception as e:
@@ -69,7 +72,7 @@ async def get_all_training_data(payload):
                 return res_data
         while num_retries < RETRY_LIMIT:
             try:
-                current_page = await es_instance.scroll(
+                current_page = es_instance.scroll(
                     scroll_id=current_page["_scroll_id"], scroll="5m"
                 )
                 break
@@ -78,7 +81,112 @@ async def get_all_training_data(payload):
     return res_data
 
 
-async def train_opnilog_model(nw, s3_client, query):
+def yield_all_training_data(payload):
+    """
+    yield training data from Opensearch
+    """
+    es_instance = Elasticsearch(
+        [ES_ENDPOINT],
+        port=9200,
+        http_compress=True,
+        http_auth=(ES_USERNAME, ES_PASSWORD),
+        verify_certs=False,
+        use_ssl=True,
+    )
+
+    query = payload["payload"]["query"]
+    scroll_time = "5m"
+    current_page = es_instance.search(
+        index="logs", body=query, scroll=scroll_time, size=10000
+    )
+    logs_fetched = 0
+    batch_data = []
+    while len(current_hit := current_page["hits"]["hits"]) > 0:
+        for h in current_hit:
+            batch_data.append(h["_source"]["log"])
+            logs_fetched += 1
+        yield batch_data
+        del batch_data
+        gc.collect()
+        batch_data = []
+        current_page = es_instance.scroll(
+            scroll_id=current_page["_scroll_id"], scroll=scroll_time
+        )
+
+
+def get_weights(data):
+    """
+    assign weights to masked dataset and make the distribution of different logs more balanced.
+    """
+    unique_sample_counter = defaultdict(int)
+    for s in data:
+        unique_sample_counter[str(s)] += 1
+
+    for key in unique_sample_counter:
+        count = unique_sample_counter[key]
+        unique_sample_counter[key] = np.sqrt(count) / count  # the sqrt weight
+
+    weights = np.array([unique_sample_counter[str(s)] for s in data])
+    return weights
+
+
+def preprocess_batch(payload):
+    """
+    the function that:
+    1. masks data from Opensearch with Opni's custom masker
+    2. applies weighted random shuffle
+    3. yields each log.
+    """
+    downsample_ratio = payload["payload"]["downsample_ratio"]
+
+    for batch in yield_all_training_data(payload):
+
+        batch_masked = [masker.mask(b) for b in batch]
+        # reduce batch_res accordingly using weighted random shuffle,
+        weights = get_weights(batch_masked)
+        if downsample_ratio < 1:
+            size_reduce_to = int(downsample_ratio * len(batch))
+            reduced_batch = random.choices(
+                population=batch_masked, weights=weights, k=size_reduce_to
+            )
+        else:
+            reduced_batch = batch_masked
+
+        yield from reduced_batch
+        del batch_masked
+        del reduced_batch
+        gc.collect()
+
+
+def split_up_payload_query(payload, num_samples: int):
+    """
+    split payload query into NUM_WORKER queries
+    """
+    downsample_ratio = num_samples / payload["payload"]["count"]
+    if NUM_WORKER == 1:
+        payload["payload"]["downsample_ratio"] = downsample_ratio
+        return [payload]
+    res_payload = []
+
+    start_ts = payload["payload"]["query"]["query"]["bool"]["filter"][0]["range"][
+        "time"
+    ]["gte"]
+    end_ts = payload["payload"]["query"]["query"]["bool"]["filter"][0]["range"]["time"][
+        "lte"
+    ]
+    ts_step = (end_ts - start_ts) // NUM_WORKER
+    for i in range(NUM_WORKER):
+        p = copy.deepcopy(payload)
+        p["payload"]["query"]["query"]["bool"]["filter"][0]["range"]["time"] = {
+            "gte": start_ts + i * ts_step,
+            "lte": start_ts + (i + 1) * ts_step,
+        }
+        p["payload"]["downsample_ratio"] = downsample_ratio
+        res_payload.append(p)
+    return res_payload
+
+
+async def train_opnilog_model(nw, s3_client, payload):
     """
     This function will be used to load the training data and then train the new OpniLog model.
     If during this process, there is any exception, it will return False indicating that a new OpniLog model failed to
@@ -89,35 +197,49 @@ async def train_opnilog_model(nw, s3_client, query):
     await nw.connect()
     await nw.publish("model_update", json.dumps({"status": "training"}).encode())
     # Load the training data.
-    try:
-        texts = await get_all_training_data(query)
-        masked_logs = [masker.mask(log) for log in texts]
-    except Exception as e:
-        logging.error(f"Unable to load data. {e}")
-        return False
-
-    # try:
-    #     if not os.path.exists("output/"):
-    #         os.makedirs("output")
-    # except Exception as e:
-    #     logging.error("Unable to create output folder.")
-
-    nr_epochs = 3
-    # undersample if there are too many data, otherwise randomsample
-    num_samples = (
-        MAX_TRAINING_SAMPLE_SIZE if len(texts) > MAX_TRAINING_SAMPLE_SIZE else 0
-    )
-    # Check to see if the length of the training data is at least 1. Otherwise, return False.
-    if len(masked_logs) > 0:
+    training_method_threshold = 1000000
+    log_count = payload["payload"]["count"]
+    if log_count < training_method_threshold:
+        # download all data if the dataset size is small, otherwise streaming.
         try:
-            tokenized = parser.tokenize_data(masked_logs, isTrain=True)
-            parser.tokenizer.save_vocab()
-            parser.train(
-                tokenized,
-                nr_epochs=nr_epochs,
-                num_samples=num_samples,
-                put_results=True,
-            )
+            texts = get_all_training_data(payload)
+            masked_logs = [masker.mask(log) for log in texts]
+        except Exception as e:
+            logging.error(f"Unable to load data. {e}")
+            return False
+        nr_epochs = 3
+        # undersample if there are too many data, otherwise randomsample
+        num_samples = (
+            MAX_TRAINING_SAMPLE_SIZE if len(texts) > MAX_TRAINING_SAMPLE_SIZE else 0
+        )
+    else:
+        nr_epochs = 2
+        num_samples = (
+            MAX_TRAINING_SAMPLE_SIZE * 3
+        )  # 1 epoch so num_samples has to time 4
+    # Check to see if the length of the training data is at least 1. Otherwise, return False.
+    if log_count > 0:
+        try:
+            if log_count < training_method_threshold:
+                tokenized = parser.tokenize_data(masked_logs, is_training=True)
+                parser.tokenizer.save_vocab()
+                parser.train(
+                    tokenized,
+                    nr_epochs=nr_epochs,
+                    num_samples=num_samples,
+                    put_results=True,
+                )
+            else:
+                parser.train(
+                    [],
+                    nr_epochs=nr_epochs,
+                    num_samples=num_samples,
+                    put_results=True,
+                    is_streaming=True,
+                    iter_function=preprocess_batch,
+                    iter_input_list=split_up_payload_query(payload, num_samples),
+                )
+                parser.tokenizer.save_vocab()
             all_files = os.listdir(save_path)
             if DEFAULT_MODEL_NAME in all_files and DEFAULT_VOCAB_NAME in all_files:
                 logger.debug("Completed training model")
