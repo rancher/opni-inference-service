@@ -105,13 +105,20 @@ def yield_all_training_data(payload):
         for h in current_hit:
             batch_data.append(h["_source"]["log"])
             logs_fetched += 1
-        yield batch_data
-        del batch_data
-        gc.collect()
-        batch_data = []
+        # yield batch_data
+        # del batch_data
+        # gc.collect()
+        # batch_data = []
+        if len(batch_data) > 500000:
+            yield batch_data
+            del batch_data
+            gc.collect()
+            batch_data = []
         current_page = es_instance.scroll(
             scroll_id=current_page["_scroll_id"], scroll=scroll_time
         )
+    if len(batch_data) > 0:
+        yield batch_data
 
 
 def get_weights(data):
@@ -138,9 +145,11 @@ def preprocess_batch(payload):
     3. yields each log.
     """
     downsample_ratio = payload["payload"]["downsample_ratio"]
+    # Standard Library
+    import time
 
     for batch in yield_all_training_data(payload):
-
+        s = time.time()
         batch_masked = [masker.mask(b) for b in batch]
         # reduce batch_res accordingly using weighted random shuffle,
         weights = get_weights(batch_masked)
@@ -151,11 +160,20 @@ def preprocess_batch(payload):
             )
         else:
             reduced_batch = batch_masked
-
+        t = time.time()
+        logger.warning(
+            f"time taken for a scroll: {t - s}, size from {len(batch)} to {len(reduced_batch)}"
+        )
         yield from reduced_batch
         del batch_masked
         del reduced_batch
         gc.collect()
+
+
+def run_process_batch(payload):
+    res = [d for d in preprocess_batch(payload)]
+    logger.info(f"len of this workload payload: {len(res)}")
+    return res
 
 
 def split_up_payload_query(payload, num_samples: int):
@@ -197,7 +215,8 @@ async def train_opnilog_model(nw, s3_client, payload):
     await nw.connect()
     await nw.publish("model_update", json.dumps({"status": "training"}).encode())
     # Load the training data.
-    training_method_threshold = 1000000
+    real_streaming = False
+    training_method_threshold = 500000
     log_count = payload["payload"]["count"]
     if log_count < training_method_threshold:
         # download all data if the dataset size is small, otherwise streaming.
@@ -213,10 +232,23 @@ async def train_opnilog_model(nw, s3_client, payload):
             MAX_TRAINING_SAMPLE_SIZE if len(texts) > MAX_TRAINING_SAMPLE_SIZE else 0
         )
     else:
-        nr_epochs = 2
-        num_samples = (
-            MAX_TRAINING_SAMPLE_SIZE * 3
-        )  # 1 epoch so num_samples has to time 4
+        if real_streaming:
+            nr_epochs = 2
+            num_samples = MAX_TRAINING_SAMPLE_SIZE * 3
+        else:
+            nr_epochs = 2
+            num_samples = MAX_TRAINING_SAMPLE_SIZE * 3
+            # Standard Library
+            import multiprocessing
+
+            pool = multiprocessing.Pool(processes=3)
+            res = pool.map(
+                run_process_batch, split_up_payload_query(payload, num_samples)
+            )
+            masked_logs = []
+            for r in res:
+                masked_logs.extend(r)
+
     # Check to see if the length of the training data is at least 1. Otherwise, return False.
     if log_count > 0:
         try:
@@ -230,16 +262,27 @@ async def train_opnilog_model(nw, s3_client, payload):
                     put_results=True,
                 )
             else:
-                parser.train(
-                    [],
-                    nr_epochs=nr_epochs,
-                    num_samples=num_samples,
-                    put_results=True,
-                    is_streaming=True,
-                    iter_function=preprocess_batch,
-                    iter_input_list=split_up_payload_query(payload, num_samples),
-                )
-                parser.tokenizer.save_vocab()
+                if not real_streaming:
+
+                    tokenized = parser.tokenize_data(masked_logs, is_training=True)
+                    parser.tokenizer.save_vocab()
+                    parser.train(
+                        tokenized,
+                        nr_epochs=nr_epochs,
+                        num_samples=num_samples,
+                        put_results=True,
+                    )
+                else:
+                    parser.train(
+                        [],
+                        nr_epochs=nr_epochs,
+                        num_samples=num_samples,
+                        put_results=True,
+                        is_streaming=True,
+                        iter_function=preprocess_batch,
+                        iter_input_list=split_up_payload_query(payload, num_samples),
+                    )
+                    parser.tokenizer.save_vocab()
             all_files = os.listdir(save_path)
             if DEFAULT_MODEL_NAME in all_files and DEFAULT_VOCAB_NAME in all_files:
                 logger.debug("Completed training model")
