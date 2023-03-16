@@ -24,10 +24,12 @@ from const import (
 )
 from elasticsearch import Elasticsearch
 from elasticsearch.exceptions import NotFoundError
-from models.opnilog.masker import LogMasker
-from models.opnilog.opnilog_parser import LogParser
 from opni_nats import NatsWrapper
 from utils import get_s3_client, s3_setup
+
+# Local
+from models.opnilog.masker import LogMasker
+from models.opnilog.opnilog_parser import LogParser
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__file__)
@@ -194,8 +196,9 @@ async def train_opnilog_model(nw, s3_client, payload):
     """
     save_path = "output/"
     parser = LogParser(save_path=save_path)
-    await nw.connect()
     await nw.publish("model_update", json.dumps({"status": "training"}).encode())
+    # Sleep for a few seconds so payload can be sent to the model_update Nats subject and it will be received before training is done.
+    await asyncio.sleep(2)
     # Load the training data.
     training_method_threshold = 1000000
     log_count = payload["payload"]["count"]
