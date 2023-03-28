@@ -202,7 +202,6 @@ async def train_opnilog_model(nw, s3_client, payload):
     # Load the training data.
     training_method_threshold = 1000000
     log_count = payload["payload"]["count"]
-    model_uuid = payload["payload"]["uuid"]
     if log_count < training_method_threshold:
         # download all data if the dataset size is small, otherwise streaming.
         try:
@@ -291,8 +290,12 @@ async def send_signal_to_nats(nw, training_success, query):
                 "vocab_file": "vocab.txt",
             },
         }
-        res = await nw.get_bucket("model-training-parameters")
-        operation = await res.put("lastModelTrained", json.dumps(query).encode())
+        model_training_parameters_bucket = await nw.get_bucket(
+            "model-training-parameters"
+        )
+        operation = await model_training_parameters_bucket.put(
+            "lastModelTrained", json.dumps(query).encode()
+        )
         await nw.publish(
             nats_subject="model_update", payload_df=json.dumps(opnilog_payload).encode()
         )
