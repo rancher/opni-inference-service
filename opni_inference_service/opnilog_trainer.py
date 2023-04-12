@@ -36,6 +36,7 @@ logger = logging.getLogger(__file__)
 logger.setLevel(LOGGING_LEVEL)
 masker = LogMasker()
 ANOMALY_KEYWORDS = ["fail", "error", "fatal"]
+BUCKET_CHECK_RETRY_LIMIT = 15
 
 es_instance = Elasticsearch(
     [ES_ENDPOINT],
@@ -188,6 +189,15 @@ def split_up_payload_query(payload, num_samples: int):
     return res_payload
 
 
+def check_s3_cleared():
+    s3_client = get_s3_client()
+    bucket = s3_client.Bucket(S3_BUCKET)
+    bucket_objects_list = list(bucket.objects.all())
+    logging.info(bucket_objects_list)
+    logging.info(len(bucket_objects_list))
+    return len(bucket_objects_list) == 0
+
+
 async def train_opnilog_model(nw, s3_client, payload):
     """
     This function will be used to load the training data and then train the new OpniLog model.
@@ -198,7 +208,18 @@ async def train_opnilog_model(nw, s3_client, payload):
     parser = LogParser(save_path=save_path)
     await nw.publish("model_update", json.dumps({"status": "training"}).encode())
     # Sleep for a few seconds so payload can be sent to the model_update Nats subject and it will be received before training is done.
-    await asyncio.sleep(2)
+    num_checks = 0
+    bucket_cleared = check_s3_cleared()
+    logging.info(bucket_cleared)
+    while not bucket_cleared:
+        num_checks += 1
+        if num_checks == BUCKET_CHECK_RETRY_LIMIT:
+            break
+        await asyncio.sleep(2)
+        bucket_cleared = check_s3_cleared()
+    if not bucket_cleared:
+        logging.error("Unable to clear S3 bucket. Not able to train model.")
+        return False
     # Load the training data.
     training_method_threshold = 1000000
     log_count = payload["payload"]["count"]
