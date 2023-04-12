@@ -193,8 +193,6 @@ def check_s3_cleared():
     s3_client = get_s3_client()
     bucket = s3_client.Bucket(S3_BUCKET)
     bucket_objects_list = list(bucket.objects.all())
-    logging.info(bucket_objects_list)
-    logging.info(len(bucket_objects_list))
     return len(bucket_objects_list) == 0
 
 
@@ -210,7 +208,6 @@ async def train_opnilog_model(nw, s3_client, payload):
     # Sleep for a few seconds so payload can be sent to the model_update Nats subject and it will be received before training is done.
     num_checks = 0
     bucket_cleared = check_s3_cleared()
-    logging.info(bucket_cleared)
     while not bucket_cleared:
         num_checks += 1
         if num_checks == BUCKET_CHECK_RETRY_LIMIT:
