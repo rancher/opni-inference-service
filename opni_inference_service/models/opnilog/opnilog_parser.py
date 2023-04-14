@@ -9,10 +9,12 @@ import pandas as pd
 import torch
 import torch.nn as nn
 from const import THRESHOLD
-from models.opnilog.opnilog_model import *  # should improve this
-from models.opnilog.opnilog_tokenizer import LogTokenizer
 from torchvision import transforms
 from utils import put_model_stats
+
+# Local
+from models.opnilog.opnilog_model import *  # should improve this
+from models.opnilog.opnilog_tokenizer import LogTokenizer
 
 # constant
 # tell torch using or not using GPU
@@ -162,13 +164,7 @@ class LogParser:
             )
         end_time = time.time()
         if put_results:
-            put_model_stats(
-                stage="train",
-                percentageCompleted=100,
-                timeElapsed=int(end_time - training_start_time),
-                remainingTime=0,
-                currentEpoch=3,
-            )
+            put_model_stats(model_status="completed", statistics={})
 
         self.save_model(model=model, model_opt=model_opt, epoch=self.nr_epochs, loss=0)
 
@@ -502,12 +498,16 @@ class LogParser:
                     f"| Epoch: {epoch} | Total Progress: {(training_progress * 100):.2f}% | Training Time Taken: {total_time_taken:.2f}s | ETC: {(remaining_time):.2f}s | Epoch Step: {i}/{self.training_batch_size} | Loss: {(loss / batch.ntokens):.4f} | Tokens per Sec: {(tokens / elapsed):.2f} |"
                 )
                 if put_results:
+                    statistics_dict = {
+                        "stage": "train",
+                        "percentageCompleted": int(100 * training_progress),
+                        "timeElapsed": int(total_time_taken),
+                        "remainingTime": int(remaining_time),
+                        "currentEpoch": epoch + 1,
+                    }
                     put_model_stats(
-                        stage="train",
-                        percentageCompleted=int(100 * training_progress),
-                        timeElapsed=int(total_time_taken),
-                        remainingTime=int(remaining_time),
-                        currentEpoch=epoch + 1,
+                        model_status="training",
+                        statistics=statistics_dict,
                     )
                 start = time.time()
                 tokens = 0

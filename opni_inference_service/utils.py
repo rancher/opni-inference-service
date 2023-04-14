@@ -23,19 +23,11 @@ logger = logging.getLogger(__file__)
 logger.setLevel(LOGGING_LEVEL)
 
 
-def put_model_stats(
-    stage, percentageCompleted=0, timeElapsed=0, remainingTime=0, currentEpoch=0
-):
-    model_training_stats = {
-        "percentageCompleted": percentageCompleted,
-        "timeElapsed": timeElapsed,
-        "remainingTime": remainingTime,
-        "currentEpoch": currentEpoch,
-        "stage": stage,
-    }
+def put_model_stats(model_status, statistics):
+    model_status = {"status": model_status, "statistics": statistics}
     try:
         result = requests.put(
-            MODEL_STATS_ENDPOINT, data=json.dumps(model_training_stats).encode()
+            MODEL_STATS_ENDPOINT, data=json.dumps(model_status).encode()
         )
     except Exception as e:
         logger.warning(f"Failed to post training status, error: {e}")
