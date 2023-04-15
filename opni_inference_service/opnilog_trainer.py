@@ -206,6 +206,7 @@ async def train_opnilog_model(nw, s3_client, payload):
     parser = LogParser(save_path=save_path)
     await nw.publish("model_update", json.dumps({"status": "training"}).encode())
     # Sleep for a few seconds so payload can be sent to the model_update Nats subject and it will be received before training is done.
+    await asyncio.sleep(2)
     num_checks = 0
     bucket_cleared = check_s3_cleared()
     while not bucket_cleared:
