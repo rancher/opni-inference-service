@@ -27,8 +27,10 @@ def put_model_stats(model_status, statistics):
     model_status = {"status": model_status, "statistics": statistics}
     try:
         result = requests.put(
-            MODEL_STATS_ENDPOINT, data=json.dumps(model_status).encode()
+            MODEL_STATS_ENDPOINT, data=json.dumps(model_status).encode(),
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
         )
+        logger.info(f"Put model training status : {result}")
     except Exception as e:
         logger.warning(f"Failed to post training status, error: {e}")
 
